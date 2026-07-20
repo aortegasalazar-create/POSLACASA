@@ -22,7 +22,9 @@
 .is-inrange .pika-button{background:rgba(192,57,43,0.2)!important;}
 .is-startrange .pika-button,.is-endrange .pika-button{background:var(--rojo)!important;color:white!important;}
 </style>
-<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAQSfBp29rK_P9iVLmYb0o-IKLIfJY4a3k&libraries=places,visualization&language=es" async defer></script>
+<script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAQSfBp29rK_P9iVLmYb0o-IKLIfJY4a3k&libraries=places&language=es" async defer></script>
+<!-- heatmap.js: libreria independiente (no de Google) para el mapa de calor, ya que Google elimino su HeatmapLayer nativo -->
+<script src="https://cdn.jsdelivr.net/npm/heatmap.js@2.0.5/build/heatmap.min.js"></script>
 <style>
 :root { --rojo:#c0392b; --rojo2:#e74c3c; --cafe:#1a0a00; --cafe2:#2d1a00; --cafe3:#4a2c00; --crema:#f5f0e8; --dorado:#d4a853; --verde:#27ae60; --azul:#2980b9; --gris:#8b7355; }
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
@@ -2358,8 +2360,24 @@ function renderDeliveryKPIs(ventas) {
   document.getElementById('del-recurrentes').textContent = recurrentes;
 }
 
+// Carga perezosa del plugin heatmap.js para Google Maps (HeatmapOverlay).
+// Sustituye a google.maps.visualization.HeatmapLayer, que Google eliminó.
+var _heatmapOverlayPromise = null;
+function loadHeatmapOverlayPlugin() {
+  if (window.HeatmapOverlay) return Promise.resolve();
+  if (_heatmapOverlayPromise) return _heatmapOverlayPromise;
+  _heatmapOverlayPromise = new Promise(function(resolve, reject) {
+    var s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/heatmap.js@2.0.5/plugins/gmaps-heatmap/gmaps-heatmap.js';
+    s.onload = function(){ resolve(); };
+    s.onerror = function(e){ _heatmapOverlayPromise = null; reject(e); };
+    document.head.appendChild(s);
+  });
+  return _heatmapOverlayPromise;
+}
+
 function renderDeliveryMap(ventas) {
-  if(typeof google === 'undefined' || !google.maps || !google.maps.visualization) {
+  if(typeof google === 'undefined' || !google.maps) {
     setTimeout(function(){ renderDeliveryMap(ventas); }, 800); return;
   }
   var mapEl = document.getElementById('delivery-map');
@@ -2402,25 +2420,31 @@ function renderDeliveryMap(ventas) {
   mapEl.style.display = 'block';
   if(emptyEl) emptyEl.style.display = 'none';
 
-  try {
-    heatmapLayer = new google.maps.visualization.HeatmapLayer({
-      data: points,
-      map: showingHeatmap ? deliveryMap : null,
+  // Heatmap independiente (heatmap.js), no depende de la función deprecada de Google
+  var heatData = points.map(function(p){ return {lat: p.lat(), lng: p.lng(), count: 1}; });
+  var mapForHeatmap = deliveryMap;
+  loadHeatmapOverlayPlugin().then(function(){
+    if(deliveryMap !== mapForHeatmap) return; // se recreó el mapa mientras cargaba
+    heatmapLayer = new HeatmapOverlay(showingHeatmap ? deliveryMap : null, {
       radius: 45,
-      opacity: 0.85,
-      gradient: [
-        'rgba(0,0,0,0)',
-        'rgba(212,168,83,0.3)',
-        'rgba(212,168,83,0.7)',
-        'rgba(192,57,43,0.8)',
-        'rgba(192,57,43,1)',
-        'rgba(255,50,50,1)'
-      ]
+      maxOpacity: 0.85,
+      scaleRadius: true,
+      useLocalExtrema: true,
+      latField: 'lat',
+      lngField: 'lng',
+      valueField: 'count',
+      gradient: {
+        0.2: 'rgba(212,168,83,0.3)',
+        0.45: 'rgba(212,168,83,0.7)',
+        0.7: 'rgba(192,57,43,0.85)',
+        1.0: 'rgba(255,50,50,1)'
+      }
     });
-  } catch(e) {
-    console.warn('HeatmapLayer no disponible (deprecado por Google Maps):', e);
+    heatmapLayer.setData({ max: 1, data: heatData });
+  }).catch(function(e){
+    console.warn('No se pudo cargar el heatmap independiente (heatmap.js):', e);
     heatmapLayer = null;
-  }
+  });
 
   // Markers for point view
   (ventas||[]).filter(function(v){ return v.lat && v.lng; }).forEach(function(v) {
