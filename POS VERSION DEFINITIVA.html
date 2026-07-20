@@ -2428,7 +2428,7 @@ function renderDeliveryMap(ventas) {
     heatmapLayer = new HeatmapOverlay(showingHeatmap ? deliveryMap : null, {
       radius: 45,
       maxOpacity: 0.85,
-      scaleRadius: true,
+      scaleRadius: false,
       useLocalExtrema: true,
       latField: 'lat',
       lngField: 'lng',
