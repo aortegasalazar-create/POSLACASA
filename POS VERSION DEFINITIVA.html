@@ -288,6 +288,7 @@ header{background:var(--cafe2);border-bottom:2px solid var(--cafe3);padding:0 20
           <div id="cli-lista" style="background:var(--cafe2);border:1px solid var(--dorado);border-radius:10px;max-height:200px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,0.5);"></div>
         </div>
       </div>
+      <button type="button" id="btn-wsp-toggle" onclick="toggleWhatsappOrder()" style="width:100%;margin-top:8px;padding:9px;border-radius:10px;border:1px solid var(--cafe3);background:transparent;color:var(--gris);font-family:'DM Sans',sans-serif;font-size:13px;font-weight:600;cursor:pointer;">📱 Pedido por WhatsApp</button>
     </div>
     <div class="ticket-items" id="ticket-items">
       <div class="ticket-vacio"><div style="font-size:48px;opacity:0.4">🛒</div><div>Carrito vacío</div><div style="font-size:13px;color:var(--gris)">Toca un producto para agregar</div></div>
@@ -705,6 +706,34 @@ function guardarLoyalty(){
 }
 var carrito = [], catActiva = 'todos', metodoPago = 'efectivo', ultimaVenta = null;
 var grupos = [], opciones = [], modProd = null, modSel = {};
+var pedidoWhatsApp = false;
+function toggleWhatsappOrder(){
+  pedidoWhatsApp = !pedidoWhatsApp;
+  var btn = document.getElementById('btn-wsp-toggle');
+  if(!btn) return;
+  if(pedidoWhatsApp){
+    btn.style.background = 'var(--verde)';
+    btn.style.borderColor = 'var(--verde)';
+    btn.style.color = '#fff';
+    btn.textContent = '✅ Pedido por WhatsApp';
+    var cb = document.getElementById('cli-buscar');
+    if(cb) cb.focus();
+  } else {
+    btn.style.background = 'transparent';
+    btn.style.borderColor = 'var(--cafe3)';
+    btn.style.color = 'var(--gris)';
+    btn.textContent = '📱 Pedido por WhatsApp';
+  }
+}
+function resetWhatsappToggle(){
+  pedidoWhatsApp = false;
+  var btn = document.getElementById('btn-wsp-toggle');
+  if(!btn) return;
+  btn.style.background = 'transparent';
+  btn.style.borderColor = 'var(--cafe3)';
+  btn.style.color = 'var(--gris)';
+  btn.textContent = '📱 Pedido por WhatsApp';
+}
 
 // RELOJ
 function tick() {
@@ -918,7 +947,7 @@ function pushItem(p, mods) {
 // TICKET
 function cambiarQty(i, d){ carrito[i].qty+=d; if(carrito[i].qty<=0) carrito.splice(i,1); renderTicket(); }
 function delItem(i){ carrito.splice(i,1); renderTicket(); }
-function vaciarCarrito(){ carrito=[]; canjeActivo=0; renderTicket(); }
+function vaciarCarrito(){ carrito=[]; canjeActivo=0; renderTicket(); resetWhatsappToggle(); }
 
 function renderTicket() {
   var cont = document.getElementById('ticket-items');
@@ -1277,6 +1306,7 @@ function procesarVenta() {
   var mesaId=document.getElementById('sel-mesa').value||null;
   var cliId=document.getElementById('sel-cliente').value||null;
   var notas=document.getElementById('notas-cobro').value;
+  if(pedidoWhatsApp){ notas = '📱 Pedido por WhatsApp' + (notas ? ' — ' + notas : ''); }
   cerrarModal('modal-cobro');
   sbFetch('ventas','POST',{subtotal:v.sub,descuento:v.desc,costo_envio:v.envio,total:v.total,metodo_pago:metodoPago,tipo_servicio:v.tipo,mesa_id:mesaId,cliente_id:cliId,notas:notas,estado:'pagada',direccion_entrega:v.tipo==='delivery'?(window._deliveryAddr||null):null,lat:v.tipo==='delivery'?(window._deliveryLat||null):null,lng:v.tipo==='delivery'?(window._deliveryLng||null):null}).then(function(r){
     var vid=r[0].id;
@@ -1342,7 +1372,7 @@ function procesarVenta() {
         '<div class="t-gracias">¡GRACIAS POR SU COMPRA!</div>'+
         '<div class="t-f">Vuelva pronto 🙏</div>'+
         '<div class="t-f" style="margin-top:8px">&nbsp;</div>';
-      carrito=[]; canjeActivo=0; renderTicket(); renderProds(); renderSelMesas();
+      carrito=[]; canjeActivo=0; renderTicket(); renderProds(); renderSelMesas(); resetWhatsappToggle();
       toast('✅ Venta #'+vid+' por $'+v.total.toFixed(2));
       // Enviar ticket por WhatsApp si el cliente tiene teléfono
       if(cliId) {
