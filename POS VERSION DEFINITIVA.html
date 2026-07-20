@@ -6,7 +6,6 @@
 <title>La Casa del Chilaquil</title>
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@400;700;900&family=DM+Sans:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/pikaday/1.8.2/css/pikaday.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/pikaday/1.8.2/pikaday.min.js"></script>
 <style>
@@ -28,11 +27,11 @@
 :root { --rojo:#c0392b; --rojo2:#e74c3c; --cafe:#1a0a00; --cafe2:#2d1a00; --cafe3:#4a2c00; --crema:#f5f0e8; --dorado:#d4a853; --verde:#27ae60; --azul:#2980b9; --gris:#8b7355; }
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
 body{font-family:'DM Sans',sans-serif;background:var(--cafe);color:var(--crema);height:100dvh;overflow:hidden;display:flex;flex-direction:column;}
-header{background:var(--cafe2);border-bottom:2px solid var(--cafe3);padding:0 16px;height:64px;min-height:64px;max-height:64px;display:flex;align-items:center;gap:10px;flex-shrink:0;overflow:hidden;}
+header{background:var(--cafe2);border-bottom:2px solid var(--cafe3);padding:0 20px;height:64px;min-height:64px;max-height:64px;display:flex;align-items:center;justify-content:space-between;flex-shrink:0;}
 .logo{font-family:Fraunces,serif;font-size:22px;font-weight:900;color:var(--rojo);}
 .logo span{color:var(--dorado);}
-.nav-tabs{display:flex;gap:3px;flex-shrink:1;min-width:0;overflow:hidden;}
-.nav-tab{padding:7px 10px;border-radius:10px;border:none;background:transparent;color:var(--gris);font-family:'DM Sans',sans-serif;font-size:13px;font-weight:500;cursor:pointer;transition:all 0.15s;white-space:nowrap;}
+.nav-tabs{display:flex;gap:4px;}
+.nav-tab{padding:8px 16px;border-radius:10px;border:none;background:transparent;color:var(--gris);font-family:'DM Sans',sans-serif;font-size:14px;font-weight:500;cursor:pointer;transition:all 0.15s;}
 .nav-tab.active{background:var(--rojo);color:white;}
 .nav-tab:active{opacity:0.8;}
 .hora{font-size:13px;color:var(--gris);}
@@ -231,27 +230,26 @@ header{background:var(--cafe2);border-bottom:2px solid var(--cafe3);padding:0 16
 <body>
 
 <header>
-  <div class="logo" style="flex-shrink:0;">🍳 La Casa del <span>Chilaquil</span></div>
+  <div class="logo">🍳 La Casa del <span>Chilaquil</span></div>
   <nav class="nav-tabs">
     <button class="nav-tab active" onclick="irVista('venta',this)">🛒 Venta</button>
     <button class="nav-tab" onclick="irVista('reportes',this)">📊 Reportes</button>
     <button class="nav-tab" onclick="irVista('inventario',this)">📦 Inventario</button>
     <button class="nav-tab" onclick="irVista('clientes',this)">👥 Clientes</button>
     <button class="nav-tab" onclick="irVista('delivery',this)">📍 Delivery & Clients</button>
-    <button class="nav-tab" onclick="irVista('importar',this)">📥 Importar Plataformas</button>
   </nav>
-  <div id="delivery-panel" style="display:none;flex-direction:row;align-items:center;gap:8px;flex-shrink:0;margin-left:auto;">
+  <div id="delivery-panel" style="display:none;flex-direction:row;align-items:center;gap:6px;min-width:0;overflow:hidden;">
     <div style="position:relative;">
-      <input id="delivery-search" placeholder="📍 Dirección de entrega..." autocomplete="off" oninput="onDeliveryInput(this.value)" style="width:240px;background:var(--cafe);border:1px solid var(--cafe3);border-radius:10px;color:var(--crema);font-size:13px;padding:7px 12px;font-family:'DM Sans',sans-serif;outline:none;box-sizing:border-box;">
+      <input id="delivery-search" placeholder="📍 Dirección de entrega..." autocomplete="off" oninput="onDeliveryInput(this.value)" style="width:280px;background:var(--cafe);border:1px solid var(--cafe3);border-radius:10px;color:var(--crema);font-size:13px;padding:7px 12px;font-family:'DM Sans',sans-serif;outline:none;box-sizing:border-box;">
       <div id="delivery-dropdown" style="display:none;position:fixed;top:64px;left:auto;right:auto;z-index:99999;margin-top:0;background:var(--cafe2);border:1px solid var(--dorado);border-radius:10px;max-height:260px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,0.8);min-width:400px;"></div>
     </div>
-    <div id="delivery-result" style="display:none;background:rgba(39,174,96,0.18);border:1px solid var(--verde);border-radius:10px;padding:6px 12px;flex-shrink:0;">
-      <div style="font-size:17px;font-weight:800;color:var(--verde);white-space:nowrap;" id="delivery-costo-txt"></div>
-      <div style="font-size:11px;color:var(--gris);white-space:nowrap;" id="delivery-dist-txt"></div>
-      <div style="display:none;" id="delivery-addr-txt"></div>
+    <div id="delivery-result" style="display:none;background:rgba(39,174,96,0.15);border:1px solid var(--verde);border-radius:8px;padding:4px 10px;flex-shrink:0;">
+      <span style="font-size:13px;font-weight:700;color:var(--verde);" id="delivery-costo-txt"></span>
+      <span style="font-size:11px;color:var(--gris);margin-left:4px;" id="delivery-dist-txt"></span>
+      <div style="font-size:11px;color:var(--gris);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" id="delivery-addr-txt"></div>
     </div>
   </div>
-  <div class="hora" id="reloj" style="flex-shrink:0;white-space:nowrap;margin-left:auto;">--:--</div>
+  <div class="hora" id="reloj">--:--</div>
 </header>
 
 
@@ -271,10 +269,7 @@ header{background:var(--cafe2);border-bottom:2px solid var(--cafe3);padding:0 16
           <select class="sel-mini" id="sel-tipo" onchange="cambiarTipo()">
             <option value="local">🪑 En mesa</option>
             <option value="para_llevar">🥡 Para llevar</option>
-            <option value="delivery">🛵 Delivery propio</option>
-            <option value="uber_eats">🟢 Uber Eats</option>
-            <option value="rappi">🔴 Rappi</option>
-            <option value="didi_food">🟡 DiDi Food</option>
+            <option value="delivery">🛵 Delivery</option>
           </select>
         </div>
         <div class="ticket-field">
@@ -406,42 +401,6 @@ header{background:var(--cafe2);border-bottom:2px solid var(--cafe3);padding:0 16
     <div class="tabla-card"><div class="tabla-card-h">📈 Ventas por día</div><canvas id="chart-dias" height="180"></canvas></div>
     <div class="tabla-card"><div class="tabla-card-h">📊 Ventas por semana</div><canvas id="chart-semanas" height="180"></canvas></div>
   </div>
-
-  <!-- PLATAFORMAS -->
-  <div style="background:var(--cafe2);border:1px solid var(--cafe3);border-radius:16px;padding:18px;flex-shrink:0">
-    <div style="font-size:13px;font-weight:700;color:var(--gris);text-transform:uppercase;letter-spacing:0.5px;margin-bottom:16px">🛵 Ventas por Plataforma</div>
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:20px">
-      <div style="background:var(--cafe);border-radius:12px;padding:16px;border-left:4px solid #27ae60;">
-        <div style="font-size:12px;color:var(--gris);margin-bottom:4px">🟢 Uber Eats</div>
-        <div style="font-size:22px;font-weight:800;color:var(--crema)" id="plat-uber-total">$0</div>
-        <div style="font-size:12px;color:var(--gris)" id="plat-uber-ordenes">0 órdenes</div>
-        <div style="font-size:12px;color:#e67e22;margin-top:4px" id="plat-uber-neto"></div>
-      </div>
-      <div style="background:var(--cafe);border-radius:12px;padding:16px;border-left:4px solid #e74c3c;">
-        <div style="font-size:12px;color:var(--gris);margin-bottom:4px">🔴 Rappi</div>
-        <div style="font-size:22px;font-weight:800;color:var(--crema)" id="plat-rappi-total">$0</div>
-        <div style="font-size:12px;color:var(--gris)" id="plat-rappi-ordenes">0 órdenes</div>
-        <div style="font-size:12px;color:#e67e22;margin-top:4px" id="plat-rappi-neto"></div>
-      </div>
-      <div style="background:var(--cafe);border-radius:12px;padding:16px;border-left:4px solid #f39c12;">
-        <div style="font-size:12px;color:var(--gris);margin-bottom:4px">🟡 DiDi Food</div>
-        <div style="font-size:22px;font-weight:800;color:var(--crema)" id="plat-didi-total">$0</div>
-        <div style="font-size:12px;color:var(--gris)" id="plat-didi-ordenes">0 órdenes</div>
-        <div style="font-size:12px;color:#e67e22;margin-top:4px" id="plat-didi-neto"></div>
-      </div>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
-      <div>
-        <div style="font-size:12px;color:var(--gris);margin-bottom:10px">Participación por plataforma</div>
-        <canvas id="chart-plataformas-pie" height="180"></canvas>
-      </div>
-      <div>
-        <div style="font-size:12px;color:var(--gris);margin-bottom:10px">Ventas por día por plataforma</div>
-        <canvas id="chart-plataformas-dias" height="180"></canvas>
-      </div>
-    </div>
-  </div>
-
   <!-- Tablas -->
   <div class="tablas-rep" style="flex-shrink:0">
     <div class="tabla-card"><div class="tabla-card-h">🏆 Top Productos</div><table class="tabla-rep" id="tabla-top"></table></div>
@@ -525,15 +484,6 @@ header{background:var(--cafe2);border-bottom:2px solid var(--cafe3);padding:0 16
   <div class="modal">
     <div class="modal-t">✅ Confirmar Cobro</div>
     <div id="resumen-cobro" style="background:var(--cafe);border-radius:12px;padding:14px;font-size:14px;line-height:1.8"></div>
-    <div class="modal-campo" id="campo-canal-delivery" style="display:none">
-      <div class="modal-label">Canal de delivery</div>
-      <select class="modal-inp" id="sel-canal-delivery">
-        <option value="delivery_propio">🛵 Delivery propio (mis repartidores)</option>
-        <option value="uber_eats">🟢 Uber Eats</option>
-        <option value="rappi">🔴 Rappi</option>
-        <option value="didi_food">🟡 DiDi Food</option>
-      </select>
-    </div>
     <div class="modal-campo"><div class="modal-label">Notas (opcional)</div><input class="modal-inp" type="text" id="notas-cobro" placeholder="Alergias, preferencias..."></div>
     <div class="modal-btns">
       <button class="modal-btn-c" onclick="cerrarModal('modal-cobro')">Cancelar</button>
@@ -759,7 +709,7 @@ function tick() {
   var d = new Date();
   document.getElementById('reloj').textContent =
     d.toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'}) + ' · ' +
-    d.toLocaleDateString('es-MX',{day:'2-digit',month:'2-digit',year:'numeric'});
+    d.toLocaleDateString('es-MX',{weekday:'short',day:'numeric',month:'short'});
 }
 setInterval(tick,1000); tick();
 
@@ -776,7 +726,6 @@ function irVista(nombre, btn) {
   if (nombre === 'inventario') renderInventario();
   if (nombre === 'clientes') renderClientes();
   if (nombre === 'delivery') setDelPeriodo('mes');
-  if (nombre === 'importar') renderImportarPanel();
 }
 
 // CARGA INICIAL
@@ -1089,13 +1038,13 @@ function recalc() {
 }
 
 // ---- DELIVERY GOOGLE MAPS ----
-var DELIVERY_ORIGEN_LAT = 25.430350727101576, DELIVERY_ORIGEN_LNG = -100.98390007322949;
+var DELIVERY_ORIGEN_LAT = 25.4273, DELIVERY_ORIGEN_LNG = -100.9950;
 var deliveryService = null;
 var deliverySessionToken = null;
 
 function obtenerCostoEnvio(distKm) {
   var d = Math.ceil(distKm);
-  var tarifas = {1:25,2:25,3:37,4:47,5:56,6:65,7:74,8:84,9:93,10:102,11:112,12:121,13:130,14:140,15:149,16:158,17:167,18:177,19:186,20:195,21:205,22:214,23:223,24:233,25:242,26:251,27:260,28:269,29:278,30:288};
+  var tarifas = {1:25,2:25,3:29,4:38,5:48,6:58,7:67,8:77,9:86,10:96,11:106,12:115,13:125,14:134,15:144,16:154,17:163,18:173,19:182,20:192,21:202,22:211,23:221,24:230,25:240,26:250,27:259,28:269,29:278,30:288};
   return tarifas[d] || (288 + (d - 30) * 10);
 }
 
@@ -1116,8 +1065,7 @@ function onDeliveryInput(val) {
     input: val,
     sessionToken: deliverySessionToken,
     location: new google.maps.LatLng(DELIVERY_ORIGEN_LAT, DELIVERY_ORIGEN_LNG),
-    radius: 20000,
-    strictBounds: true,
+    radius: 50000,
     componentRestrictions: {country:'mx'},
     language: 'es'
   }, function(predictions, status) {
@@ -1126,6 +1074,7 @@ function onDeliveryInput(val) {
       return '<div class="cli-item" style="padding:10px 14px;cursor:pointer" data-pid="'+p.place_id+'" data-desc="'+p.description.replace(/"/g,"&quot;")+'" onclick="seleccionarDireccionEl(this)">' +
         '<span style="font-size:13px">📍 '+p.description+'</span></div>';
     }).join('');
+    // Position dropdown under the search input
     var inp = document.getElementById('delivery-search');
     if(inp) {
       var rect = inp.getBoundingClientRect();
@@ -1138,96 +1087,55 @@ function onDeliveryInput(val) {
 }
 
 function seleccionarDireccionEl(el) {
-  seleccionarDireccion(el.getAttribute('data-pid'), el.getAttribute('data-desc'));
+  var placeId = el.getAttribute('data-pid');
+  var descripcion = el.getAttribute('data-desc');
+  seleccionarDireccion(placeId, descripcion);
 }
 
 function seleccionarDireccion(placeId, descripcion) {
   var dd = document.getElementById('delivery-dropdown');
   if(dd) dd.style.display = 'none';
   document.getElementById('delivery-search').value = descripcion;
-  document.getElementById('delivery-result').style.display = 'block';
+  var res = document.getElementById('delivery-result');
+  res.style.display = 'block';
   document.getElementById('delivery-addr-txt').textContent = '⏳ Calculando...';
   document.getElementById('delivery-dist-txt').textContent = '';
   document.getElementById('delivery-costo-txt').textContent = '';
 
-  // Paso 1: obtener coordenadas exactas del lugar via Geocoder con placeId
+  if(typeof google === 'undefined' || !google.maps) {
+    document.getElementById('delivery-addr-txt').textContent = '❌ Google Maps no cargó, recarga la página';
+    return;
+  }
+
+  // Use Geocoder with placeId - works without a visible map
   var geocoder = new google.maps.Geocoder();
   geocoder.geocode({placeId: placeId}, function(results, status) {
-    var destLat, destLng, addr;
     if(status === 'OK' && results[0]) {
-      destLat = results[0].geometry.location.lat();
-      destLng = results[0].geometry.location.lng();
-      addr = results[0].formatted_address || descripcion;
+      calcularDistanciaEntrega(
+        results[0].geometry.location.lat(),
+        results[0].geometry.location.lng(),
+        results[0].formatted_address || descripcion
+      );
     } else {
-      // Sin geocoder, usar Directions con placeId directo
-      calcularConPlaceId(placeId, descripcion);
-      return;
-    }
-
-    // Paso 2: calcular con Directions usando coordenadas reales
-    var ds = new google.maps.DirectionsService();
-    ds.route({
-      origin: {lat: DELIVERY_ORIGEN_LAT, lng: DELIVERY_ORIGEN_LNG},
-      destination: {lat: destLat, lng: destLng},
-      travelMode: google.maps.TravelMode.DRIVING,
-      provideRouteAlternatives: true
-    }, function(result, status) {
-      if(status === 'OK' && result.routes && result.routes.length > 0) {
-        // Ruta más corta en distancia
-        var best = result.routes.reduce(function(m, r) {
-          return r.legs[0].distance.value < m.legs[0].distance.value ? r : m;
-        });
-        aplicarResultado(best.legs[0], addr);
-      } else {
-        document.getElementById('delivery-addr-txt').textContent = '❌ Error ruta: ' + status;
-        toast('No se pudo calcular la ruta: ' + status, true);
-      }
-    });
-  });
-
-  if(deliveryService) deliverySessionToken = new google.maps.places.AutocompleteSessionToken();
-}
-
-function calcularConPlaceId(placeId, descripcion) {
-  var ds = new google.maps.DirectionsService();
-  ds.route({
-    origin: {lat: DELIVERY_ORIGEN_LAT, lng: DELIVERY_ORIGEN_LNG},
-    destination: {placeId: placeId},
-    travelMode: google.maps.TravelMode.DRIVING,
-    provideRouteAlternatives: true
-  }, function(result, status) {
-    if(status === 'OK' && result.routes && result.routes.length > 0) {
-      var best = result.routes.reduce(function(m, r) {
-        return r.legs[0].distance.value < m.legs[0].distance.value ? r : m;
+      // Fallback: geocode by address text
+      geocoder.geocode({address: descripcion + ', Saltillo, Coahuila, Mexico'}, function(r2, s2) {
+        if(s2 === 'OK' && r2[0]) {
+          calcularDistanciaEntrega(r2[0].geometry.location.lat(), r2[0].geometry.location.lng(), descripcion);
+        } else {
+          document.getElementById('delivery-addr-txt').textContent = '❌ No se ubicó. Verifica que Geocoding API esté activa en Google Cloud.';
+          document.getElementById('delivery-dist-txt').textContent = 'Error: ' + status + ' / ' + s2;
+        }
       });
-      aplicarResultado(best.legs[0], descripcion);
-    } else {
-      document.getElementById('delivery-addr-txt').textContent = '❌ Error ruta: ' + status;
-      toast('No se pudo calcular la ruta: ' + status, true);
     }
   });
 }
-
-function aplicarResultado(leg, addr) {
-  var metros = leg.distance.value;
-  var distKm = metros / 1000;
-  var costo = obtenerCostoEnvio(distKm);
-  window._deliveryAddr = addr;
-  window._deliveryLat = leg.end_location.lat();
-  window._deliveryLng = leg.end_location.lng();
-  document.getElementById('delivery-addr-txt').textContent = '📍 ' + addr;
-  document.getElementById('delivery-dist-txt').textContent = '🛣️ ' + distKm.toFixed(1) + ' km por calles';
-  document.getElementById('delivery-costo-txt').textContent = '$' + costo + ' de envío';
-  document.getElementById('envio-inp').value = costo;
-  recalc();
-}
-
 function calcularDistanciaEntrega(destLat, destLng, descripcion) {
   var R = 6371;
   var dLat = (destLat - DELIVERY_ORIGEN_LAT) * Math.PI / 180;
   var dLon = (destLng - DELIVERY_ORIGEN_LNG) * Math.PI / 180;
   var a = Math.sin(dLat/2)*Math.sin(dLat/2) + Math.cos(DELIVERY_ORIGEN_LAT*Math.PI/180)*Math.cos(destLat*Math.PI/180)*Math.sin(dLon/2)*Math.sin(dLon/2);
   var lineaRecta = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  // Factor escalonado: rutas cortas tienen más rodeos relativos en Saltillo
   var factor = lineaRecta < 2 ? 2.0 : lineaRecta < 4 ? 1.6 : lineaRecta < 7 ? 1.35 : 1.2;
   var distKm = lineaRecta * factor;
   var costo = obtenerCostoEnvio(distKm);
@@ -1259,15 +1167,11 @@ function ajustarAlturaTicket() {
 }
 
 function cambiarTipo() {
-  var tipo = document.getElementById('sel-tipo').value;
-  var esDelivery = tipo === 'delivery';
-  var esPlataforma = tipo === 'uber_eats' || tipo === 'rappi' || tipo === 'didi_food';
-  var esAnyDelivery = esDelivery || esPlataforma;
+  var esDelivery = document.getElementById('sel-tipo').value === 'delivery';
   document.getElementById('envio-inp').style.display = 'none';
   var panel = document.getElementById('delivery-panel');
-  // Plataformas no necesitan dirección — ocultar panel de búsqueda
   if(panel) panel.style.display = esDelivery ? 'flex' : 'none';
-  if(!esAnyDelivery) {
+  if(!esDelivery) {
     document.getElementById('envio-inp').value = 0;
     var res = document.getElementById('delivery-result');
     if(res) res.style.display = 'none';
@@ -1348,9 +1252,9 @@ function abrirCobro() {
   var sub=carrito.reduce(function(s,i){return s+i.precio*i.qty;},0);
   var desc=parseFloat(document.getElementById('desc-inp').value)||0;
   var tipo=document.getElementById('sel-tipo').value;
-  var esDeliveryTipo = tipo==='delivery'||tipo==='uber_eats'||tipo==='rappi'||tipo==='didi_food'; var envio=tipo==='delivery'?(parseFloat(document.getElementById('envio-inp').value)||0):0;
+  var envio=tipo==='delivery'?(parseFloat(document.getElementById('envio-inp').value)||0):0;
   var total=sub-desc+envio;
-  var tl={local:'🪑 En mesa',para_llevar:'🥡 Para llevar',delivery:'🛵 Delivery propio',uber_eats:'🟢 Uber Eats',rappi:'🔴 Rappi',didi_food:'🟡 DiDi Food'};
+  var tl={local:'🪑 En mesa',para_llevar:'🥡 Para llevar',delivery:'🛵 Delivery'};
   var ms=document.getElementById('sel-mesa'); var msT=ms.options[ms.selectedIndex].text;
   var clId=document.getElementById('sel-cliente').value; var clT=document.getElementById('cli-buscar').value||'Cliente general';
   document.getElementById('resumen-cobro').innerHTML=
@@ -1363,9 +1267,6 @@ function abrirCobro() {
     '<div>Pago: '+metodoPago+'</div>';
   ultimaVenta={sub:sub,desc:desc,envio:envio,total:total,tipo:tipo,itemsSnap:carrito.map(function(i){return{emoji:i.emoji,nombre:i.nombre,qty:i.qty,precio:i.precio,nota:i.nota||''};})};
   document.getElementById('notas-cobro').value='';
-  // Mostrar selector de canal solo si es delivery
-  var campoCanal = document.getElementById('campo-canal-delivery');
-  if (campoCanal) campoCanal.style.display = tipo === 'delivery' ? 'flex' : 'none';
   abrirModal('modal-cobro');
 }
 
@@ -1374,12 +1275,8 @@ function procesarVenta() {
   var mesaId=document.getElementById('sel-mesa').value||null;
   var cliId=document.getElementById('sel-cliente').value||null;
   var notas=document.getElementById('notas-cobro').value;
-  var plataformas = ['uber_eats','rappi','didi_food'];
-  var canal = plataformas.indexOf(v.tipo) >= 0 ? v.tipo
-    : v.tipo === 'delivery' ? (document.getElementById('sel-canal-delivery').value || 'delivery_propio')
-    : 'local';
   cerrarModal('modal-cobro');
-  sbFetch('ventas','POST',{subtotal:v.sub,descuento:v.desc,costo_envio:v.envio,total:v.total,metodo_pago:metodoPago,tipo_servicio:(plataformas.indexOf(v.tipo)>=0?'delivery':v.tipo),canal:canal,mesa_id:mesaId,cliente_id:cliId,notas:notas,estado:'pagada',direccion_entrega:v.tipo==='delivery'?(window._deliveryAddr||null):null,lat:v.tipo==='delivery'?(window._deliveryLat||null):null,lng:v.tipo==='delivery'?(window._deliveryLng||null):null}).then(function(r){
+  sbFetch('ventas','POST',{subtotal:v.sub,descuento:v.desc,costo_envio:v.envio,total:v.total,metodo_pago:metodoPago,tipo_servicio:v.tipo,mesa_id:mesaId,cliente_id:cliId,notas:notas,estado:'pagada',direccion_entrega:v.tipo==='delivery'?(window._deliveryAddr||null):null,lat:v.tipo==='delivery'?(window._deliveryLat||null):null,lng:v.tipo==='delivery'?(window._deliveryLng||null):null}).then(function(r){
     var vid=r[0].id;
     var dets=carrito.map(function(i){return{venta_id:vid,producto_id:i.id,cantidad:i.qty,precio_unitario:i.precio,notas:i.nota||''};});
     return sbFetch('detalle_venta','POST',dets).then(function(){
@@ -1445,24 +1342,21 @@ function procesarVenta() {
         '<div class="t-f" style="margin-top:8px">&nbsp;</div>';
       carrito=[]; canjeActivo=0; renderTicket(); renderProds(); renderSelMesas();
       toast('✅ Venta #'+vid+' por $'+v.total.toFixed(2));
-      // Mostrar modal de éxito con botón WhatsApp si el cliente tiene teléfono
-      var exitoCli = cliId ? clientes.find(function(c){ return c.id == cliId; }) : null;
-      var exitoTit = document.getElementById('exito-titulo');
-      var exitoDet = document.getElementById('exito-detalle');
-      var exitoWa  = document.getElementById('btn-whatsapp');
-      if(exitoTit) exitoTit.textContent = '¡Venta #'+vid+' registrada!';
-      if(exitoDet) exitoDet.innerHTML = 'Total: <strong>$'+v.total.toFixed(2)+'</strong>' +
-        (exitoCli ? '<br>Cliente: '+exitoCli.nombre : '');
-      if(exitoWa) {
+      // Enviar ticket por WhatsApp si el cliente tiene teléfono
+      if(cliId) {
+        var exitoCli = clientes.find(function(c){ return c.id == cliId; });
         if(exitoCli && exitoCli.telefono) {
           var waUrl = generarUrlWhatsApp(exitoCli, vid, v, clT);
-          exitoWa.href = waUrl;
-          exitoWa.style.display = 'block';
-        } else {
-          exitoWa.style.display = 'none';
+          // Abrir en nueva pestaña sin abandonar el POS (funciona en iPad Safari)
+          var a = document.createElement('a');
+          a.href = waUrl;
+          a.target = '_blank';
+          a.rel = 'noopener';
+          document.body.appendChild(a);
+          a.click();
+          document.body.removeChild(a);
         }
       }
-      abrirModal('modal-exito');
     });
   }).catch(function(e){ toast('Error: '+e.message, true); });
 }
@@ -1702,88 +1596,6 @@ function cargarReportes() {
     var semLabels=semKeys.map(function(d){var p=d.split('-');return 'Sem '+p[2]+'/'+p[1];});
     var semVals=semKeys.map(function(d){return semanasMap[d];});
     renderChart('chart-semanas', semLabels, semVals, 'Ventas por semana ($)', 'repChartSemanas');
-
-      // ---- PLATAFORMAS ----
-    var platCanales = ['uber_eats','rappi','didi_food'];
-    var platLabels  = {uber_eats:'Uber Eats', rappi:'Rappi', didi_food:'DiDi Food'};
-    var platColors  = {uber_eats:'#27ae60', rappi:'#e74c3c', didi_food:'#f39c12'};
-
-    var platData = {};
-    platCanales.forEach(function(c){ platData[c] = {total:0, neto:0, count:0, dias:{}}; });
-
-    vs.forEach(function(v) {
-      var c = v.canal;
-      if(!platData[c]) return;
-      var bruto = parseFloat(v.subtotal || v.total || 0);
-      var neto  = parseFloat(v.total || 0);
-      platData[c].total  += bruto;
-      platData[c].neto   += neto;
-      platData[c].count  += 1;
-      var dia = fechaLocalStr(v.fecha);
-      platData[c].dias[dia] = (platData[c].dias[dia] || 0) + bruto;
-    });
-
-    // KPIs por plataforma
-    platCanales.forEach(function(c) {
-      var d = platData[c];
-      var elT = document.getElementById('plat-' + c.replace('_','').replace('food','didi').replace('uber_eats','uber') + '-total');
-      // mapeo simple de IDs
-      var idMap = {uber_eats:'uber', rappi:'rappi', didi_food:'didi'};
-      var pid = idMap[c];
-      var elTotal  = document.getElementById('plat-' + pid + '-total');
-      var elOrd    = document.getElementById('plat-' + pid + '-ordenes');
-      var elNeto   = document.getElementById('plat-' + pid + '-neto');
-      if(elTotal) elTotal.textContent = '$' + d.total.toFixed(0);
-      if(elOrd)   elOrd.textContent   = d.count + ' órdenes · $' + (d.count ? (d.total/d.count).toFixed(0) : 0) + ' prom';
-      if(elNeto)  elNeto.textContent  = d.neto < d.total ? 'Neto: $' + d.neto.toFixed(0) + ' (comisiones incl.)' : '';
-    });
-
-    // Pie de participación
-    var pieCanvas = document.getElementById('chart-plataformas-pie');
-    if(pieCanvas) {
-      if(window._platPieChart) window._platPieChart.destroy();
-      var pieData = platCanales.map(function(c){ return platData[c].total; });
-      var pieLabels = platCanales.map(function(c){ return platLabels[c]; });
-      var pieColors = platCanales.map(function(c){ return platColors[c]; });
-      window._platPieChart = new Chart(pieCanvas, {
-        type: 'doughnut',
-        data: { labels: pieLabels, datasets: [{ data: pieData, backgroundColor: pieColors, borderWidth: 0 }] },
-        options: { responsive:true, plugins:{ legend:{ position:'bottom', labels:{ color:'#c9a96e', font:{size:11} } } } }
-      });
-    }
-
-    // Barras por día por plataforma
-    var diasCanvas = document.getElementById('chart-plataformas-dias');
-    if(diasCanvas) {
-      if(window._platDiasChart) window._platDiasChart.destroy();
-      // Unir todos los días
-      var allDias = {};
-      platCanales.forEach(function(c){ Object.keys(platData[c].dias).forEach(function(d){ allDias[d]=1; }); });
-      var sortedDias = Object.keys(allDias).sort();
-      var diaLabels = sortedDias.map(function(d){ var p=d.split('-'); return p[2]+'/'+p[1]; });
-      var datasets = platCanales.map(function(c) {
-        return {
-          label: platLabels[c],
-          data: sortedDias.map(function(d){ return platData[c].dias[d] || 0; }),
-          backgroundColor: platColors[c] + 'cc',
-          borderColor: platColors[c],
-          borderWidth: 1
-        };
-      });
-      window._platDiasChart = new Chart(diasCanvas, {
-        type: 'bar',
-        data: { labels: diaLabels, datasets: datasets },
-        options: {
-          responsive:true,
-          plugins:{ legend:{ position:'bottom', labels:{ color:'#c9a96e', font:{size:11} } } },
-          scales:{
-            x:{ stacked:false, ticks:{ color:'#c9a96e', font:{size:10} }, grid:{ color:'rgba(255,255,255,0.05)' } },
-            y:{ ticks:{ color:'#c9a96e', callback:function(v){return '$'+v;} }, grid:{ color:'rgba(255,255,255,0.05)' } }
-          }
-        }
-      });
-    }
-    // ---- FIN PLATAFORMAS ----
 
   }).catch(function(e){toast('Error reportes: '+e.message, true);});
 }
@@ -2554,7 +2366,7 @@ function renderDeliveryMap(ventas) {
   var emptyEl = document.getElementById('del-map-empty');
   if(!mapEl) return;
 
-  var saltillo = {lat: 25.430350727101576, lng: -100.98390007322949};
+  var saltillo = {lat: 25.4232, lng: -100.9927};
   if(!deliveryMap) {
     deliveryMap = new google.maps.Map(mapEl, {
       center: saltillo, zoom: 12,
@@ -2590,20 +2402,25 @@ function renderDeliveryMap(ventas) {
   mapEl.style.display = 'block';
   if(emptyEl) emptyEl.style.display = 'none';
 
-  heatmapLayer = new google.maps.visualization.HeatmapLayer({
-    data: points,
-    map: showingHeatmap ? deliveryMap : null,
-    radius: 45,
-    opacity: 0.85,
-    gradient: [
-      'rgba(0,0,0,0)',
-      'rgba(212,168,83,0.3)',
-      'rgba(212,168,83,0.7)',
-      'rgba(192,57,43,0.8)',
-      'rgba(192,57,43,1)',
-      'rgba(255,50,50,1)'
-    ]
-  });
+  try {
+    heatmapLayer = new google.maps.visualization.HeatmapLayer({
+      data: points,
+      map: showingHeatmap ? deliveryMap : null,
+      radius: 45,
+      opacity: 0.85,
+      gradient: [
+        'rgba(0,0,0,0)',
+        'rgba(212,168,83,0.3)',
+        'rgba(212,168,83,0.7)',
+        'rgba(192,57,43,0.8)',
+        'rgba(192,57,43,1)',
+        'rgba(255,50,50,1)'
+      ]
+    });
+  } catch(e) {
+    console.warn('HeatmapLayer no disponible (deprecado por Google Maps):', e);
+    heatmapLayer = null;
+  }
 
   // Markers for point view
   (ventas||[]).filter(function(v){ return v.lat && v.lng; }).forEach(function(v) {
@@ -2863,462 +2680,5 @@ cargarDatos();
   </div>
 </div>
 
-
-<!-- VISTA IMPORTAR PLATAFORMAS -->
-<div class="vista" id="vista-importar">
-  <div style="display:flex;flex-direction:column;gap:20px;padding:20px;overflow-y:auto;height:calc(100vh - 64px);width:100%;box-sizing:border-box;">
-
-    <!-- Título -->
-    <div style="display:flex;justify-content:space-between;align-items:center;flex-shrink:0;">
-      <div class="sec-titulo">📥 Importar Órdenes de Plataformas</div>
-    </div>
-
-    <!-- Config de comisiones -->
-    <div style="background:var(--cafe2);border:1px solid var(--cafe3);border-radius:16px;padding:20px;flex-shrink:0;">
-      <div style="font-weight:700;font-size:15px;margin-bottom:16px;">⚙️ Comisiones e Impuestos por Plataforma</div>
-      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;">
-        <div>
-          <div class="modal-label">🟢 Uber Eats (%)</div>
-          <input class="modal-inp" type="number" id="cfg-comision-uber" value="42.37" min="0" max="100" step="0.01" style="width:100%">
-          <div style="font-size:11px;color:var(--gris);margin-top:4px;">Comisiones + retenciones</div>
-        </div>
-        <div>
-          <div class="modal-label">🔴 Rappi (%)</div>
-          <input class="modal-inp" type="number" id="cfg-comision-rappi" value="42.37" min="0" max="100" step="0.01" style="width:100%">
-          <div style="font-size:11px;color:var(--gris);margin-top:4px;">Comisiones + retenciones</div>
-        </div>
-        <div>
-          <div class="modal-label">🟡 DiDi Food (%)</div>
-          <input class="modal-inp" type="number" id="cfg-comision-didi" value="8.73" min="0" max="100" step="0.01" style="width:100%">
-          <div style="font-size:11px;color:var(--gris);margin-top:4px;">Retención de impuestos</div>
-        </div>
-      </div>
-      <div style="font-size:12px;color:var(--gris);margin-top:12px;">💡 El neto = Total bruto × (1 - % / 100). Ajusta según tus estados de cuenta.</div>
-    </div>
-
-    <!-- Zona de carga de archivos -->
-    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:16px;flex-shrink:0;">
-      <!-- Uber -->
-      <div style="background:var(--cafe2);border:1px solid var(--cafe3);border-radius:16px;padding:20px;">
-        <div style="font-size:15px;font-weight:700;margin-bottom:4px;">🟢 Uber Eats</div>
-        <div style="font-size:12px;color:var(--gris);margin-bottom:16px;">CSV desde restaurant.uber.com → Reports → Order History</div>
-        <div id="drop-uber" onclick="document.getElementById('file-uber').click()"
-          style="border:2px dashed var(--cafe3);border-radius:12px;padding:24px;text-align:center;cursor:pointer;transition:all 0.2s;"
-          ondragover="event.preventDefault();this.style.borderColor='var(--dorado)'"
-          ondragleave="this.style.borderColor='var(--cafe3)'"
-          ondrop="handleDrop(event,'uber')">
-          <div style="font-size:32px;margin-bottom:8px;">📂</div>
-          <div style="font-size:13px;color:var(--gris);">Arrastra el CSV o toca para seleccionar</div>
-          <input type="file" id="file-uber" accept=".csv" style="display:none" onchange="handleFile(this,'uber')">
-        </div>
-        <div id="status-uber" style="margin-top:12px;font-size:12px;color:var(--gris);min-height:20px;"></div>
-      </div>
-
-      <!-- Rappi -->
-      <div style="background:var(--cafe2);border:1px solid var(--cafe3);border-radius:16px;padding:20px;">
-        <div style="font-size:15px;font-weight:700;margin-bottom:4px;">🔴 Rappi</div>
-        <div style="font-size:12px;color:var(--gris);margin-bottom:16px;">XLSX desde partners.rappi.com → Pagos → Descargar relación de ventas</div>
-        <div id="drop-rappi" onclick="document.getElementById('file-rappi').click()"
-          style="border:2px dashed var(--cafe3);border-radius:12px;padding:24px;text-align:center;cursor:pointer;transition:all 0.2s;"
-          ondragover="event.preventDefault();this.style.borderColor='var(--dorado)'"
-          ondragleave="this.style.borderColor='var(--cafe3)'"
-          ondrop="handleDrop(event,'rappi')">
-          <div style="font-size:32px;margin-bottom:8px;">📂</div>
-          <div style="font-size:13px;color:var(--gris);">Arrastra el XLSX o toca para seleccionar</div>
-          <input type="file" id="file-rappi" accept=".xlsx,.xls" style="display:none" onchange="handleFile(this,'rappi')">
-        </div>
-        <div id="status-rappi" style="margin-top:12px;font-size:12px;color:var(--gris);min-height:20px;"></div>
-      </div>
-
-      <!-- DiDi -->
-      <div style="background:var(--cafe2);border:1px solid var(--cafe3);border-radius:16px;padding:20px;">
-        <div style="font-size:15px;font-weight:700;margin-bottom:4px;">🟡 DiDi Food</div>
-        <div style="font-size:12px;color:var(--gris);margin-bottom:16px;">XLSX desde portal DiDi Food → Reportes → Reporte diario de pedidos</div>
-        <div id="drop-didi" onclick="document.getElementById('file-didi').click()"
-          style="border:2px dashed var(--cafe3);border-radius:12px;padding:24px;text-align:center;cursor:pointer;transition:all 0.2s;"
-          ondragover="event.preventDefault();this.style.borderColor='var(--dorado)'"
-          ondragleave="this.style.borderColor='var(--cafe3)'"
-          ondrop="handleDrop(event,'didi')">
-          <div style="font-size:32px;margin-bottom:8px;">📂</div>
-          <div style="font-size:13px;color:var(--gris);">Arrastra el XLSX o toca para seleccionar</div>
-          <input type="file" id="file-didi" accept=".xlsx,.xls" style="display:none" onchange="handleFile(this,'didi')">
-        </div>
-        <div id="status-didi" style="margin-top:12px;font-size:12px;color:var(--gris);min-height:20px;"></div>
-      </div>
-    </div>
-
-    <!-- Preview de órdenes a importar -->
-    <div id="import-preview" style="display:none;flex-shrink:0;">
-      <div style="background:var(--cafe2);border:1px solid var(--cafe3);border-radius:16px;overflow:hidden;">
-        <div style="padding:16px;border-bottom:1px solid var(--cafe3);display:flex;justify-content:space-between;align-items:center;">
-          <div style="font-weight:700;font-size:15px;">Vista previa — <span id="preview-count">0</span> órdenes listas para importar</div>
-          <div style="display:flex;gap:10px;">
-            <button class="btn-nuevo" onclick="limpiarImport()" style="color:var(--gris);">✕ Limpiar</button>
-            <button onclick="confirmarImport()" style="background:var(--rojo);color:white;border:none;border-radius:12px;padding:12px 24px;font-size:14px;font-weight:700;cursor:pointer;">✅ Importar todo a Supabase</button>
-          </div>
-        </div>
-        <div style="overflow-x:auto;">
-          <table style="width:100%;border-collapse:collapse;" id="preview-table">
-            <thead>
-              <tr style="background:var(--cafe3);">
-                <th style="padding:10px 16px;text-align:left;font-size:12px;color:var(--gris);">Canal</th>
-                <th style="padding:10px 16px;text-align:left;font-size:12px;color:var(--gris);">Fecha</th>
-                <th style="padding:10px 16px;text-align:left;font-size:12px;color:var(--gris);"># Orden</th>
-                <th style="padding:10px 16px;text-align:left;font-size:12px;color:var(--gris);">Productos</th>
-                <th style="padding:10px 16px;text-align:right;font-size:12px;color:var(--gris);">Total bruto</th>
-                <th style="padding:10px 16px;text-align:right;font-size:12px;color:var(--gris);">Comisión</th>
-                <th style="padding:10px 16px;text-align:right;font-size:12px;color:var(--gris);">Neto</th>
-              </tr>
-            </thead>
-            <tbody id="preview-tbody"></tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-
-    <!-- Resultado de importación -->
-    <div id="import-resultado" style="display:none;flex-shrink:0;"></div>
-
-  </div>
-</div>
-
-<script>
-// ============ IMPORTAR PLATAFORMAS ============
-
-var importPendientes = [];
-
-function renderImportarPanel() {
-  // Cargar config guardada
-  var cfgUber = localStorage.getItem('comision_uber') || '42.37';
-  var cfgRappi = localStorage.getItem('comision_rappi') || '42.37';
-  var cfgDidi = localStorage.getItem('comision_didi') || '8.73';
-  document.getElementById('cfg-comision-uber').value = cfgUber;
-  document.getElementById('cfg-comision-rappi').value = cfgRappi;
-  document.getElementById('cfg-comision-didi').value = cfgDidi;
-
-  // Guardar al cambiar
-  ['uber','rappi','didi'].forEach(function(p) {
-    var el = document.getElementById('cfg-comision-' + p);
-    if(el) el.onchange = function() {
-      localStorage.setItem('comision_' + p, this.value);
-      if(importPendientes.length) renderPreview();
-    };
-  });
-}
-
-function getComision(canal) {
-  var key = canal === 'uber_eats' ? 'uber' : canal === 'didi_food' ? 'didi' : 'rappi';
-  return parseFloat(document.getElementById('cfg-comision-' + key).value) || 0;
-}
-
-function handleDrop(e, plataforma) {
-  e.preventDefault();
-  document.getElementById('drop-' + plataforma).style.borderColor = 'var(--cafe3)';
-  var file = e.dataTransfer.files[0];
-  if(file) procesarArchivo(file, plataforma);
-}
-
-function handleFile(input, plataforma) {
-  if(input.files[0]) procesarArchivo(input.files[0], plataforma);
-}
-
-function setStatus(plataforma, msg, color) {
-  var el = document.getElementById('status-' + plataforma);
-  if(el) { el.textContent = msg; el.style.color = color || 'var(--gris)'; }
-}
-
-function procesarArchivo(file, plataforma) {
-  setStatus(plataforma, '⏳ Leyendo archivo...', 'var(--dorado)');
-  var reader = new FileReader();
-
-  if(file.name.endsWith('.csv')) {
-    reader.onload = function(e) {
-      var ordenes = parsearUber(e.target.result);
-      agregarOrdenes(ordenes, plataforma);
-    };
-    reader.readAsText(file, 'UTF-8');
-  } else {
-    reader.onload = function(e) {
-      var data = new Uint8Array(e.target.result);
-      var workbook = XLSX.read(data, {type: 'array'});
-      var ordenes = plataforma === 'rappi'
-        ? parsearRappi(workbook)
-        : parsearDidi(workbook);
-      agregarOrdenes(ordenes, plataforma);
-    };
-    reader.readAsArrayBuffer(file);
-  }
-}
-
-function parsearUber(csvText) {
-  var lines = csvText.split('\n');
-  if(lines.length < 2) return [];
-  var headers = lines[0].split(',').map(function(h){ return h.trim().replace(/\xa0/g,' '); });
-
-  // Buscar índices por palabras clave
-  function findIdx(keywords) {
-    for(var i=0; i<headers.length; i++) {
-      var h = headers[i].toLowerCase();
-      if(keywords.every(function(k){ return h.indexOf(k.toLowerCase()) >= 0; })) return i;
-    }
-    return -1;
-  }
-
-  var idxId = findIdx(['id.','pedido','administrador']);
-  var idxFecha = findIdx(['fecha','pedido']);
-  var idxEstado = findIdx(['estado','pedido']);
-  var idxVentas = findIdx(['ventas totales','ajustes']);
-  var idxProductos = findIdx(['producto']); // buscará aunque no exista aún
-
-  var ordenes = [];
-  for(var i=1; i<lines.length; i++) {
-    var cols = lines[i].split(',');
-    if(!cols[idxId] || cols[idxId].trim() === '') continue;
-    var estado = (cols[idxEstado] || '').toLowerCase().trim();
-    if(estado !== 'completado' && estado !== 'completed') continue;
-
-    var productos = idxProductos >= 0 ? (cols[idxProductos] || '').trim() : '';
-    if(!productos) continue; // sin productos → omitir
-
-    ordenes.push({
-      canal: 'uber_eats',
-      num_orden: cols[idxId].trim(),
-      fecha: cols[idxFecha] ? cols[idxFecha].trim() : '',
-      productos: productos,
-      total_bruto: parseFloat(cols[idxVentas] || 0)
-    });
-  }
-  return ordenes;
-}
-
-function parsearRappi(workbook) {
-  var ws = workbook.Sheets[workbook.SheetNames[0]];
-  var rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
-
-  // Headers en fila 2 (índice 1)
-  var headers = rows[1] || [];
-  function findIdx(keyword) {
-    for(var i=0; i<headers.length; i++) {
-      if(String(headers[i]).toLowerCase().indexOf(keyword.toLowerCase()) >= 0) return i;
-    }
-    return -1;
-  }
-
-  var idxOrden = findIdx('orden');
-  var idxFecha = findIdx('fecha');
-  var idxTotal = findIdx('total');
-  var idxEstado = findIdx('estado');
-  var idxProductos = findIdx('product'); // buscará aunque no exista aún
-
-  var ordenes = [];
-  for(var i=2; i<rows.length; i++) {
-    var row = rows[i];
-    if(!row[idxOrden]) continue;
-    var estado = String(row[idxEstado] || '').toLowerCase();
-    if(estado !== 'terminada' && estado !== 'completada') continue;
-
-    var productos = idxProductos >= 0 ? String(row[idxProductos] || '').trim() : '';
-    if(!productos) continue; // sin productos → omitir
-
-    ordenes.push({
-      canal: 'rappi',
-      num_orden: String(row[idxOrden]),
-      fecha: String(row[idxFecha] || ''),
-      productos: productos,
-      total_bruto: parseFloat(row[idxTotal] || 0)
-    });
-  }
-  return ordenes;
-}
-
-function parsearDidi(workbook) {
-  var ws = workbook.Sheets[workbook.SheetNames[0]];
-  var rows = XLSX.utils.sheet_to_json(ws, {header:1, defval:''});
-  var headers = rows[0] || [];
-
-  function findIdx(keywords) {
-    for(var i=0; i<headers.length; i++) {
-      var h = String(headers[i]).toLowerCase();
-      if(keywords.every(function(k){ return h.indexOf(k.toLowerCase()) >= 0; })) return i;
-    }
-    return -1;
-  }
-
-  var idxOrden    = findIdx(['núm. de pedido']);
-  var idxFecha    = findIdx(['fecha']);
-  var idxEstado   = findIdx(['estado del pedido']);
-  var idxProductos = findIdx(['información del producto']);
-  var idxPrecio   = findIdx(['precio original']);
-  var idxPromoTienda = findIdx(['gastos de promo pagados por la tienda']);
-
-  var ordenes = [];
-  for(var i=1; i<rows.length; i++) {
-    var row = rows[i];
-    if(!row[idxOrden]) continue;
-    var estado = String(row[idxEstado] || '').toLowerCase();
-    if(estado !== 'finalizada' && estado !== 'completada') continue;
-
-    var productosRaw = String(row[idxProductos] || '').trim();
-    if(!productosRaw) continue;
-
-    // Parsear "Producto*qty:Mod*qty,...;Producto*qty:..."
-    var productosLista = [];
-    productosRaw.split(';').forEach(function(item) {
-      item = item.trim();
-      if(!item) return;
-      var prodPart = item.split(':')[0].trim();
-      var nombre = prodPart.indexOf('*') >= 0 ? prodPart.rsplit ? prodPart.substring(0, prodPart.lastIndexOf('*')) : prodPart.split('*').slice(0,-1).join('*') : prodPart;
-      var qty = prodPart.indexOf('*') >= 0 ? prodPart.split('*').pop() : '1';
-      productosLista.push(nombre.trim() + ' x' + qty);
-    });
-
-    var precioOriginal = parseFloat(row[idxPrecio] || 0);
-    var promoTienda = parseFloat(row[idxPromoTienda] || 0);
-    var totalBruto = precioOriginal - promoTienda;
-
-    // Formatear fecha YYYYMMDD → YYYY-MM-DD
-    var fechaRaw = String(row[idxFecha] || '');
-    var fecha = fechaRaw.length === 8
-      ? fechaRaw.substring(0,4) + '-' + fechaRaw.substring(4,6) + '-' + fechaRaw.substring(6,8)
-      : fechaRaw;
-
-    ordenes.push({
-      canal: 'didi_food',
-      num_orden: String(row[idxOrden]),
-      fecha: fecha,
-      productos: productosLista.join(', '),
-      total_bruto: totalBruto
-    });
-  }
-  return ordenes;
-}
-
-function agregarOrdenes(ordenes, plataforma) {
-  var canalMap = {uber:'uber_eats', rappi:'rappi', didi:'didi_food'};
-  var canal = canalMap[plataforma];
-
-  // Quitar órdenes previas del mismo canal
-  importPendientes = importPendientes.filter(function(o){ return o.canal !== canal; });
-  importPendientes = importPendientes.concat(ordenes);
-
-  if(ordenes.length === 0) {
-    setStatus(plataforma, '⚠️ Sin órdenes con productos (se importarán cuando la plataforma los incluya)', 'var(--gris)');
-  } else {
-    setStatus(plataforma, '✅ ' + ordenes.length + ' órdenes listas', 'var(--verde)');
-    document.getElementById('drop-' + plataforma).style.borderColor = 'var(--verde)';
-  }
-
-  renderPreview();
-}
-
-function renderPreview() {
-  var preview = document.getElementById('import-preview');
-  var tbody = document.getElementById('preview-tbody');
-  var count = document.getElementById('preview-count');
-
-  if(importPendientes.length === 0) {
-    preview.style.display = 'none';
-    return;
-  }
-
-  preview.style.display = 'block';
-  count.textContent = importPendientes.length;
-
-  var canalEmoji = {uber_eats:'🟢', rappi:'🔴', didi_food:'🟡'};
-  var canalNombre = {uber_eats:'Uber Eats', rappi:'Rappi', didi_food:'DiDi Food'};
-
-  tbody.innerHTML = importPendientes.map(function(o) {
-    var comision = getComision(o.canal);
-    var neto = o.total_bruto * (1 - comision/100);
-    var emoji = canalEmoji[o.canal] || '📦';
-    return '<tr style="border-bottom:1px solid var(--cafe3);">' +
-      '<td style="padding:10px 16px;font-size:13px;">' + emoji + ' ' + (canalNombre[o.canal]||o.canal) + '</td>' +
-      '<td style="padding:10px 16px;font-size:13px;color:var(--gris);">' + o.fecha + '</td>' +
-      '<td style="padding:10px 16px;font-size:12px;font-family:monospace;color:var(--dorado);">' + String(o.num_orden).substring(0,16) + '</td>' +
-      '<td style="padding:10px 16px;font-size:12px;color:var(--gris);max-width:280px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + o.productos + '</td>' +
-      '<td style="padding:10px 16px;font-size:13px;font-weight:600;text-align:right;">$' + o.total_bruto.toFixed(2) + '</td>' +
-      '<td style="padding:10px 16px;font-size:12px;text-align:right;color:#e67e22;">-' + comision.toFixed(2) + '%</td>' +
-      '<td style="padding:10px 16px;font-size:13px;font-weight:700;color:var(--verde);text-align:right;">$' + neto.toFixed(2) + '</td>' +
-      '</tr>';
-  }).join('');
-}
-
-function limpiarImport() {
-  importPendientes = [];
-  ['uber','rappi','didi'].forEach(function(p) {
-    setStatus(p, '', '');
-    document.getElementById('drop-' + p).style.borderColor = 'var(--cafe3)';
-    document.getElementById('file-' + p).value = '';
-  });
-  document.getElementById('import-preview').style.display = 'none';
-  document.getElementById('import-resultado').style.display = 'none';
-}
-
-function confirmarImport() {
-  if(!importPendientes.length) return;
-
-  var btn = event.target;
-  btn.textContent = '⏳ Importando...';
-  btn.disabled = true;
-
-  var fecha_hoy = new Date().toISOString();
-  var registros = importPendientes.map(function(o) {
-    var comision = getComision(o.canal);
-    var neto = o.total_bruto * (1 - comision/100);
-    return {
-      canal: o.canal,
-      tipo_servicio: 'delivery',
-      estado: 'pagada',
-      notas: '[' + o.num_orden + '] ' + o.productos,
-      total: parseFloat(neto.toFixed(2)),
-      subtotal: parseFloat(o.total_bruto.toFixed(2)),
-      descuento: parseFloat((o.total_bruto - neto).toFixed(2)),
-      costo_envio: 0,
-      metodo_pago: 'plataforma',
-      fecha: o.fecha ? (o.fecha.length === 10 ? o.fecha + 'T12:00:00' : o.fecha) : fecha_hoy
-    };
-  });
-
-  // Insertar en lotes de 20
-  var lotes = [];
-  for(var i=0; i<registros.length; i+=20) lotes.push(registros.slice(i, i+20));
-
-  var insertados = 0;
-  var errores = 0;
-
-  function insertarLote(idx) {
-    if(idx >= lotes.length) {
-      // Terminó
-      btn.textContent = '✅ Importar todo a Supabase';
-      btn.disabled = false;
-      var res = document.getElementById('import-resultado');
-      res.style.display = 'block';
-      res.innerHTML = '<div style="background:var(--cafe2);border:1px solid var(--verde);border-radius:16px;padding:20px;display:flex;justify-content:space-between;align-items:center;">' +
-        '<div>' +
-          '<div style="font-size:16px;font-weight:700;color:var(--verde);">✅ Importación completada</div>' +
-          '<div style="font-size:13px;color:var(--gris);margin-top:4px;">' + insertados + ' órdenes importadas' + (errores ? ' · ' + errores + ' errores' : '') + '</div>' +
-        '</div>' +
-        '<button class="btn-nuevo" onclick="limpiarImport()" style="color:var(--rojo);border-color:var(--rojo);">Nueva importación</button>' +
-      '</div>';
-      toast('✅ ' + insertados + ' órdenes importadas a Supabase');
-      importPendientes = [];
-      document.getElementById('import-preview').style.display = 'none';
-      return;
-    }
-
-    sbFetch('ventas', 'POST', lotes[idx]).then(function(r) {
-      insertados += lotes[idx].length;
-      insertarLote(idx + 1);
-    }).catch(function(e) {
-      errores += lotes[idx].length;
-      insertarLote(idx + 1);
-    });
-  }
-
-  insertarLote(0);
-}
-
-// ============ FIN IMPORTAR PLATAFORMAS ============
-</script>
 </body>
 </html>
