@@ -4577,6 +4577,7 @@ function waAceptar(id){
   waSb('wa_pedidos?id=eq.' + id + '&estado=eq.nuevo', 'PATCH', {estado: 'aceptando', actualizado: new Date().toISOString()}).then(function(r){
     if (!r.length) throw new Error('Este pedido ya lo atendió alguien más');
     ped = r[0];
+    if (ped.simulado) { ped.venta_id = null; return null; } // prueba: no se cobra ni descuenta inventario
     var dom = ped.entrega === 'domicilio';
     var notas = '📱 WhatsApp #' + ped.id + ' · ' + (ped.nombre || '') + ' · ' + waTel(ped.telefono) +
       (ped.paga_con ? ' · Paga con ' + waDinero(ped.paga_con) : '') + (ped.referencias ? ' · Ref: ' + ped.referencias : '') + (ped.notas ? ' · ' + ped.notas : '');
@@ -4584,6 +4585,7 @@ function waAceptar(id){
       metodo_pago: ped.pago, tipo_servicio: dom ? 'delivery' : 'para_llevar', canal: dom ? 'delivery_propio' : 'local',
       notas: notas, estado: 'pagada', direccion_entrega: dom ? (ped.direccion || null) : null, lat: dom ? ped.lat : null, lng: dom ? ped.lng : null});
   }).then(function(v){
+    if (!v) return;
     var vid = v[0].id; ped.venta_id = vid;
     var dets = (ped.items || []).map(function(l){
       return {venta_id: vid, producto_id: l.producto_id, cantidad: l.cantidad, precio_unitario: Number(l.precio_unitario), notas: waNotaLinea(l)};
@@ -4599,11 +4601,11 @@ function waAceptar(id){
   }).then(function(){
     return waSb('wa_pedidos?id=eq.' + id, 'PATCH', {estado: 'aceptado', venta_id: ped.venta_id, actualizado: new Date().toISOString()});
   }).then(function(){
-    toast('Pedido #' + id + ' aceptado · venta #' + ped.venta_id);
+    toast(ped.simulado ? 'Pedido de prueba #' + id + ' aceptado (no se cobró ni cuenta en la venta)' : 'Pedido #' + id + ' aceptado · venta #' + ped.venta_id);
     return waFn({accion: 'aviso', pedido_id: id, tipo: 'aceptado'}).catch(function(){});
   }).catch(function(e){
     toast(String(e.message || e).slice(0, 140), true);
-    if (ped && !ped.venta_id) sbFetch('wa_pedidos?id=eq.' + id + '&estado=eq.aceptando', 'PATCH', {estado: 'nuevo'}).catch(function(){});
+    if (ped && !ped.venta_id && !ped.simulado) sbFetch('wa_pedidos?id=eq.' + id + '&estado=eq.aceptando', 'PATCH', {estado: 'nuevo'}).catch(function(){});
   }).then(function(){ delete waOcupado[id]; waCargarPedidos(); waRevisar(); });
 }
 
