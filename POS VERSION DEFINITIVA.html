@@ -3094,9 +3094,14 @@ cargarDatos();
       <div class="orp-box">
         <div class="orp-box-h"><div class="orp-box-t">Cómo contesta el bot</div></div>
         <div class="wa-form">
-          <label>Bot encendido
-            <span class="wa-sw"><input type="checkbox" id="wa-cfg-activo"><span>Si lo apagas, los mensajes llegan pero nadie los contesta solo.</span></span>
+          <label>¿A quién contesta el bot?
+            <select id="wa-cfg-activo" class="orp-inp">
+              <option value="1">A todos los clientes</option>
+              <option value="2">Solo a los números de prueba</option>
+              <option value="0">A nadie (apagado: los mensajes llegan y los contesta el equipo)</option>
+            </select>
           </label>
+          <label>Números de prueba<input id="wa-cfg-probadores" class="orp-inp" placeholder="Ej. 844 123 4567, 844 765 4321"></label>
           <label>Horario de pedidos<input id="wa-cfg-horario" class="orp-inp" placeholder="Ej. lunes a sábado de 8:00 am a 2:00 pm"></label>
           <label>Tiempo para recoger<input id="wa-cfg-pickup" class="orp-inp" placeholder="Ej. 20 minutos"></label>
           <label>Tiempo a domicilio<input id="wa-cfg-domicilio" class="orp-inp" placeholder="Ej. 40 a 60 minutos"></label>
@@ -4504,14 +4509,15 @@ function waCargar(completo){
 function waCargarCfg(llenar){
   return sbFetch('config_orp?clave=like.bot_*&select=clave,valor,texto').then(function(r){
     waCfg = {}; r.forEach(function(x){ waCfg[x.clave] = x; });
-    var on = Number((waCfg.bot_activo || {}).valor) === 1;
+    var modo = Number((waCfg.bot_activo || {}).valor) || 0, on = modo > 0;
     var e = document.getElementById('wa-estado-bot');
-    e.textContent = on ? '● Bot encendido' : '● Bot apagado';
+    e.textContent = modo === 1 ? '● Bot encendido' : modo === 2 ? '● Bot en prueba (solo números de prueba)' : '● Bot apagado';
     e.style.cssText = 'margin-left:6px;' + (on ? 'background:rgba(34,181,115,.15);color:#4ade80;border:1px solid rgba(34,181,115,.5)'
       : 'background:rgba(239,83,80,.12);color:#ff8a80;border:1px solid rgba(239,83,80,.45)');
     if (llenar) {
       var t = function(k){ return (waCfg[k] || {}).texto || ''; };
-      document.getElementById('wa-cfg-activo').checked = on;
+      document.getElementById('wa-cfg-activo').value = String(modo);
+      document.getElementById('wa-cfg-probadores').value = t('bot_probadores');
       document.getElementById('wa-cfg-horario').value = t('bot_horario');
       document.getElementById('wa-cfg-pickup').value = t('bot_tiempo_pickup');
       document.getElementById('wa-cfg-domicilio').value = t('bot_tiempo_domicilio');
@@ -4735,9 +4741,10 @@ function waGuardarAjustes(){
   var v = function(id){ return document.getElementById(id).value.trim(); };
   var filas = [
     ['bot_horario', v('wa-cfg-horario')], ['bot_tiempo_pickup', v('wa-cfg-pickup')], ['bot_tiempo_domicilio', v('wa-cfg-domicilio')],
-    ['bot_transferencia', v('wa-cfg-transf')], ['bot_notas', v('wa-cfg-notas')], ['bot_modelo', v('wa-cfg-modelo')]
+    ['bot_transferencia', v('wa-cfg-transf')], ['bot_notas', v('wa-cfg-notas')], ['bot_modelo', v('wa-cfg-modelo')],
+    ['bot_probadores', v('wa-cfg-probadores')]
   ];
-  var activo = document.getElementById('wa-cfg-activo').checked ? 1 : 0;
+  var activo = Number(document.getElementById('wa-cfg-activo').value) || 0;
   Promise.all(filas.map(function(f){ return sbFetch('config_orp?clave=eq.' + f[0], 'PATCH', {texto: f[1]}); })
     .concat([sbFetch('config_orp?clave=eq.bot_activo', 'PATCH', {valor: activo})]))
     .then(function(){ toast('Ajustes del bot guardados'); waCargarCfg(true); })
