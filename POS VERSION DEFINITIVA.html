@@ -24,6 +24,10 @@
 .is-inrange .pika-button{background:rgba(47,111,237,0.2)!important;}
 .is-startrange .pika-button,.is-endrange .pika-button{background:var(--rojo)!important;color:white!important;}
 /* WhatsApp */
+.wa-alerta{position:fixed;left:50%;transform:translateX(-50%);top:76px;z-index:9000;background:#16a34a;color:#fff;border-radius:16px;padding:14px 20px;display:flex;gap:16px;align-items:center;font-size:15px;box-shadow:0 12px 36px rgba(0,0,0,.45);cursor:pointer;animation:waLatido 1.6s ease-in-out infinite;max-width:calc(100vw - 32px);}
+.wa-alerta[hidden]{display:none!important;}
+.wa-alerta span{background:#fff;color:#15803d;border-radius:10px;padding:6px 12px;font-weight:800;font-size:13px;white-space:nowrap;}
+@keyframes waLatido{0%,100%{box-shadow:0 12px 36px rgba(0,0,0,.45),0 0 0 0 rgba(34,197,94,.7);}50%{box-shadow:0 12px 36px rgba(0,0,0,.45),0 0 0 12px rgba(34,197,94,0);}}
 .wa-badge{background:#22b573;color:#fff;border-radius:999px;font-size:11px;font-weight:800;padding:1px 7px;margin-left:2px;line-height:16px;}
 .wa-sec{display:flex;flex-direction:column;gap:14px;flex-shrink:0;}
 .wa-sec[hidden]{display:none!important;}
@@ -3028,6 +3032,7 @@ cargarDatos();
 
 
 <!-- VISTA CORTE DE CAJA (ORP) -->
+<div id="wa-alerta" class="wa-alerta" hidden onclick="waIrAlerta()"></div>
 <div class="vista" id="vista-whatsapp">
   <div class="orp-page">
     <div class="orp-top">
@@ -3051,7 +3056,7 @@ cargarDatos();
           <button class="orp-chip" data-waf="aceptado" onclick="waFiltro('aceptado')">En preparación</button>
           <button class="orp-chip" data-waf="hoy" onclick="waFiltro('hoy')">Todos de hoy</button>
         </div>
-        <label class="wa-check"><input type="checkbox" id="wa-ver-sim" onchange="waVerSim=this.checked;waCargar()"> Mostrar pedidos de prueba</label>
+        <label class="wa-check"><input type="checkbox" id="wa-ver-sim" onchange="waVerSim=this.checked;waCargar()"> Mostrar pedidos de «Probar el bot»</label>
       </div>
       <div id="wa-pedidos" class="wa-grid"></div>
     </div>
@@ -4430,33 +4435,60 @@ function waFiltro(f){
 }
 
 // ---------- aviso de pedidos nuevos (corre siempre, esté donde esté el cajero) ----------
-function waSonar(){
+// Un solo "altavoz" para todo el POS. Chrome solo deja sonar después de que alguien toca la pantalla,
+// así que se despierta con el primer clic o tecla del cajero.
+var waAudio = null;
+function waAudioCtx(){
   try {
-    var C = window.AudioContext || window.webkitAudioContext, ctx = new C();
-    [0, 0.22, 0.44].forEach(function(t, i){
-      var o = ctx.createOscillator(), g = ctx.createGain();
-      o.type = 'sine'; o.frequency.value = i === 2 ? 1175 : 880;
-      g.gain.setValueAtTime(0.0001, ctx.currentTime + t);
-      g.gain.exponentialRampToValueAtTime(0.35, ctx.currentTime + t + 0.02);
-      g.gain.exponentialRampToValueAtTime(0.0001, ctx.currentTime + t + 0.18);
-      o.connect(g); g.connect(ctx.destination); o.start(ctx.currentTime + t); o.stop(ctx.currentTime + t + 0.2);
-    });
+    if (!waAudio) { var C = window.AudioContext || window.webkitAudioContext; waAudio = new C(); }
+    if (waAudio.state === 'suspended') waAudio.resume();
   } catch (e) {}
+  return waAudio;
 }
+['click', 'keydown', 'touchstart'].forEach(function(ev){ document.addEventListener(ev, waAudioCtx, {once: true, capture: true}); });
+function waSonar(){
+  var ctx = waAudioCtx(); if (!ctx) return;
+  // Timbre tipo tablet de plataforma: dos rondas de tres notas
+  [0, 0.18, 0.36, 0.9, 1.08, 1.26].forEach(function(t, i){
+    var o = ctx.createOscillator(), g = ctx.createGain();
+    o.type = 'triangle'; o.frequency.value = [880, 1109, 1319][i % 3];
+    var t0 = ctx.currentTime + t;
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(0.7, t0 + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.16);
+    o.connect(g); g.connect(ctx.destination); o.start(t0); o.stop(t0 + 0.18);
+  });
+}
+var waUltimoSonido = 0;
 function waRevisar(){
-  sbFetch('wa_pedidos?estado=eq.nuevo&simulado=eq.false&select=id&order=id.desc&limit=50').then(function(r){
+  // Pedidos cerrados por el bot que nadie ha aceptado (los del simulador del POS no cuentan)
+  sbFetch('wa_pedidos?estado=eq.nuevo&telefono=neq.SIMULADOR&select=id,nombre,total&order=id.desc&limit=50').then(function(r){
     var b = document.getElementById('wa-badge');
     b.textContent = r.length; b.hidden = !r.length;
-    var max = r.length ? r[0].id : 0;
-    if (waUltimoId !== null && max > waUltimoId) { waSonar(); toast('📱 Nuevo pedido de WhatsApp #' + max); }
+    var max = r.length ? r[0].id : 0, ahora = Date.now();
+    var nuevo = waUltimoId !== null && max > waUltimoId;
     if (waUltimoId === null || max > waUltimoId) waUltimoId = max;
+    // Suena al entrar un pedido y sigue sonando cada 30 s hasta que lo acepten o lo rechacen
+    if (r.length && (nuevo || ahora - waUltimoSonido > 29000)) { waSonar(); waUltimoSonido = ahora; }
+    if (nuevo) toast('📱 Nuevo pedido de WhatsApp #' + max);
+    var av = document.getElementById('wa-alerta');
+    if (r.length) {
+      av.innerHTML = '📱 <b>' + (r.length === 1 ? 'Pedido de WhatsApp por atender: #' + r[0].id + ' · ' + waEsc(r[0].nombre || '') + ' · ' + waDinero(r[0].total)
+        : r.length + ' pedidos de WhatsApp por atender') + '</b><span>Ver pedido</span>';
+      av.hidden = false;
+    } else av.hidden = true;
     var v = document.getElementById('vista-whatsapp');
     if (v && v.classList.contains('active') && (waSec === 'pedidos' || waSec === 'chats')) waCargar();
   }).catch(function(){});
 }
+function waIrAlerta(){
+  waFil = 'nuevo';
+  irVista('whatsapp', document.querySelector('.nav-tab[data-vista=whatsapp]'));
+  waSeccion('pedidos'); waFiltro('nuevo');
+}
 function waIniciar(){
   if (window._waIniciado) return; window._waIniciado = true;
-  waRevisar(); setInterval(waRevisar, 15000);
+  waRevisar(); setInterval(waRevisar, 10000);
   waCargarCfg();
 }
 
@@ -4497,7 +4529,7 @@ function waCargarPedidos(){
   if (waFil === 'nuevo') q += '&estado=eq.nuevo';
   else if (waFil === 'aceptado') q += '&estado=in.(aceptado,listo)&creado=gte.' + waHoyUTC();
   else q += '&creado=gte.' + waHoyUTC();
-  if (!waVerSim) q += '&simulado=eq.false';
+  if (!waVerSim) q += '&telefono=neq.SIMULADOR';
   sbFetch(q).then(function(r){
     var cont = document.getElementById('wa-pedidos');
     if (!r.length) {
