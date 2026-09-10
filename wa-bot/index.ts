@@ -300,7 +300,11 @@ async function atender(tel: string, nombre: string, texto: string, extra: { lat?
     modo: chat?.modo ?? "bot", pausado_hasta: chat?.pausado_hasta ?? null });
 
   const c = await config();
-  if (!extra.simulado && Number(c.bot_activo?.valor ?? 0) !== 1) return { ok: true, apagado: true };
+  // bot_activo: 0 = apagado · 1 = contesta a todos · 2 = solo a los números de prueba (bot_probadores)
+  const modoBot = Number(c.bot_activo?.valor ?? 0);
+  const diez = (x: string) => String(x).replace(/\D/g, "").slice(-10);
+  const probadores = (c.bot_probadores?.texto ?? "").split(/[,;\s]+/).map(diez).filter((x) => x.length === 10);
+  if (!extra.simulado && !(modoBot === 1 || (modoBot === 2 && probadores.includes(diez(tel))))) return { ok: true, apagado: true };
   if (chat?.modo === "equipo" && chat.pausado_hasta && new Date(chat.pausado_hasta) > new Date()) return { ok: true, con_equipo: true };
 
   // 2) si llegan varios mensajes seguidos, contesta solo al último (con todo el contexto)
