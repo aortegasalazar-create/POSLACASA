@@ -378,7 +378,9 @@ async function herramienta(nombre: string, input: any, ctx: { tel: string; nombr
     const firma = firmaPedido(v.lineas, input);
     if (nombre === "revisar_pedido") {
       const completo = !!(input.entrega && input.pago);
-      ctx.contexto.revision = completo ? { firma, msg: ctx.msgId } : null;
+      // Si vuelve a revisar lo mismo, se conserva el momento del primer resumen (así el "sí" del cliente sí cuenta)
+      const previa = ctx.contexto.revision;
+      ctx.contexto.revision = !completo ? null : (previa && previa.firma === firma ? previa : { firma, msg: ctx.msgId });
       await sb.from("wa_chats").update({ contexto: ctx.contexto }).eq("telefono", ctx.tel);
       return { ok: true, lineas: resumen, subtotal: v.subtotal, envio, total,
         siguiente: completo ? "Manda el resumen final completo y pregunta si es correcto y si es todo. Registra solo cuando conteste que sí."
