@@ -3549,7 +3549,7 @@ function platSugerir(nombre, tipo) {
   if (/chilaquil/.test(n)) {
     if (/\bgrandes?\b/.test(n)) return s('Chilaquiles Grandes', 1);
     if (/\bmedianos?\b/.test(n)) return s('Chilaquiles Medianos', 1);
-    if (/\bchicos?\b/.test(n)) return s('Chilaquiles Chicos', 1);
+    if (/\bchicos?\b|\bmini\b/.test(n)) return s('Mini Chilaquiles', 1);
     if (/chilaquiles (mas|con) /.test(n)) return s('Chilaquiles Grandes', 1, '→ Chilaquiles Grandes (mismo precio que los grandes)');
   }
   if (/coca/.test(n)) return s(/zero|sin azucar|light/.test(n) ? 'Coca Cola Zero' : 'Coca Cola Regular', 1);
