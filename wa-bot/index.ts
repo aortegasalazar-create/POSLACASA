@@ -596,6 +596,7 @@ function leerMensaje(m: any): { texto: string; lat?: number; lng?: number } {
 
 async function procesarWebhook(body: any) {
   const trabajos: Promise<unknown>[] = [];
+  const fallidos: string[] = [];
   const values: any[] = [];
   for (const e of body.entry ?? []) for (const ch of e.changes ?? []) values.push({ field: ch.field, v: ch.value });
   if (body.messages || body.contacts) values.push({ field: "messages", v: body }); // formato viejo
@@ -613,11 +614,18 @@ async function procesarWebhook(body: any) {
     for (const c of v?.contacts ?? []) nombres[c.wa_id] = c.profile?.name ?? "";
     for (const m of v?.messages ?? []) {
       const l = leerMensaje(m);
-      if (m.type === "image") trabajos.push(marcarComprobante(m.from));
-      trabajos.push(atender(m.from, nombres[m.from] ?? "", l.texto, { lat: l.lat, lng: l.lng, wa_id: m.id }).catch((e) => console.error("atender", e)));
+      const payload = m.button?.payload ?? m.interactive?.button_reply?.id ?? null;
+      trabajos.push((async () => {
+        // ¿Es un repartidor contestando una oferta? Entonces no va al bot de pedidos
+        if (await mensajeRepartidor(m.from, l.texto, payload, m.id ?? null).catch((e) => { console.error("reparto", e); return false; })) return;
+        if (m.type === "image") await marcarComprobante(m.from);
+        await atender(m.from, nombres[m.from] ?? "", l.texto, { lat: l.lat, lng: l.lng, wa_id: m.id });
+      })().catch((e) => console.error("atender", e)));
     }
+    for (const st of v?.statuses ?? []) if (st.status === "failed" && st.id) fallidos.push(st.id);
   }
   await Promise.all(trabajos);
+  await revisarReparto(fallidos).catch((e) => console.error("revisarReparto", e));
 }
 
 async function marcarComprobante(tel: string) {
@@ -625,6 +633,261 @@ async function marcarComprobante(tel: string) {
   const { data } = await sb.from("wa_pedidos").select("id,notas").eq("telefono", tel).eq("pago", "transferencia").gte("creado", desde)
     .order("id", { ascending: false }).limit(1);
   if (data?.[0]) await sb.from("wa_pedidos").update({ notas: [data[0].notas, "📎 Mandó comprobante por WhatsApp"].filter(Boolean).join(" · ") }).eq("id", data[0].id);
+}
+
+// ---------- reparto a domicilio ----------
+// Al aceptar un pedido a domicilio se le ofrece al primer repartidor (plantilla con botones Sí / No).
+// Si dice que no, si no contesta en bot_reparto_minutos o si no le llega el mensaje, pasa al siguiente.
+// Cuando alguien acepta: se le mandan los datos completos y el POS avisa con su nombre. Si nadie acepta: alerta en el POS.
+const PLANTILLA_REPARTO = "reparto_pedido";
+const PLANTILLA_IDIOMA = "es_MX";
+type Rep = { id: number; nombre: string; telefono: string; activo: boolean; orden: number };
+type Intento = { rep: number; nombre: string; enviado: string; estado: string; msg?: string | null; via?: string };
+const diez = (x: string) => String(x ?? "").replace(/\D/g, "").slice(-10);
+const telWa = (t: string) => { const d = diez(t); return d.length === 10 ? "521" + d : String(t).replace(/\D/g, ""); };
+const telBonito = (t: string) => { const d = diez(t); return d.length === 10 ? `${d.slice(0, 3)} ${d.slice(3, 6)} ${d.slice(6)}` : t; };
+const unaLinea = (s: string, max = 120) => String(s ?? "").replace(/[\n\t\r]+/g, " ").replace(/ {2,}/g, " ").trim().slice(0, max) || "—";
+
+async function enviarD360(payload: Record<string, unknown>): Promise<{ ok: boolean; id?: string; error?: string }> {
+  if (!D360_KEY) return { ok: false, error: "sin llave de 360dialog" };
+  const url = D360_BASE.includes("sandbox") ? `${D360_BASE}/v1/messages` : `${D360_BASE}/messages`;
+  const r = await fetch(url, {
+    method: "POST", headers: { "D360-API-KEY": D360_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({ messaging_product: "whatsapp", recipient_type: "individual", ...payload }),
+  });
+  const t = await r.text();
+  let j: any = {}; try { j = JSON.parse(t); } catch (_) { /* */ }
+  if (!r.ok) { console.error("360dialog", r.status, t); return { ok: false, error: t.slice(0, 300) }; }
+  return { ok: true, id: j.messages?.[0]?.id };
+}
+async function textoRepartidor(rep: Rep, texto: string) {
+  const to = telWa(rep.telefono);
+  await sb.from("wa_mensajes").insert({ telefono: to, rol: "bot", texto });
+  return enviarD360({ to, type: "text", text: { preview_url: false, body: texto } });
+}
+
+async function repartidores(soloActivos = true): Promise<Rep[]> {
+  let q = sb.from("repartidores").select("*").order("orden").order("id");
+  if (soloActivos) q = q.eq("activo", true);
+  const { data } = await q;
+  return (data ?? []) as Rep[];
+}
+
+// El pedido completo (lo original + lo que se agregó y ya se aceptó)
+async function pedidoCompleto(p: any) {
+  const { data: hs } = await sb.from("wa_pedidos").select("items,total").eq("pedido_padre", p.id).in("estado", ["aceptando", "aceptado", "listo"]);
+  const items = [...(p.items ?? []), ...(hs ?? []).flatMap((h: any) => h.items ?? [])];
+  const total = Number(p.total ?? 0) + (hs ?? []).reduce((s: number, h: any) => s + Number(h.total ?? 0), 0);
+  return { items, total };
+}
+function cobroCorto(p: any, total: number) {
+  if (p.pago === "transferencia") return p.pagado ? "ya pagado por transferencia (no cobrar)" : "transferencia (confirma en cocina antes de salir)";
+  return `${dinero(total)} en efectivo` + (p.paga_con ? ` (paga con ${dinero(Number(p.paga_con))})` : "");
+}
+async function detallesParaRepartidor(p: any, rep: Rep) {
+  const { items, total } = await pedidoCompleto(p);
+  const mapa = p.lat != null && p.lng != null ? `https://www.google.com/maps?q=${p.lat},${p.lng}`
+    : (p.direccion ? `https://www.google.com/maps/search/${encodeURIComponent(p.direccion)}` : "");
+  let cobro: string;
+  if (p.pago === "transferencia") cobro = p.pagado ? "🏦 Ya pagó por transferencia: *no cobrar*" : "🏦 Paga por transferencia: confirma en cocina si ya está pagado antes de salir";
+  else cobro = `💵 Cobrar *${dinero(total)}* en efectivo` + (p.paga_con ? ` · paga con ${dinero(Number(p.paga_con))} → cambio ${dinero(Number(p.paga_con) - total)}` : "");
+  return [
+    `✅ ${rep.nombre.split(/\s+/)[0]}, el pedido #${p.id} es tuyo. Pasa a la cocina por él 🙌`,
+    "",
+    `👤 ${p.nombre || "Cliente"} · ${telBonito(p.telefono)}`,
+    `📍 ${p.direccion || "Sin dirección"}`,
+    p.referencias ? `🏠 ${p.referencias}` : "",
+    mapa ? `🗺️ ${mapa}` : "",
+    "",
+    "📦 Lleva:",
+    ...items.map((l: any) => `• ${l.cantidad}x ${l.nombre}${l.detalle ? " (" + l.detalle + ")" : ""}`),
+    "",
+    cobro,
+  ].filter((x, i, a) => x !== "" || (a[i - 1] ?? "") !== "").join("\n");
+}
+
+async function ofrecer(p: any, rep: Rep): Promise<{ ok: boolean; id?: string; via?: string; error?: string }> {
+  const { total } = await pedidoCompleto(p);
+  const to = telWa(rep.telefono);
+  const params = [rep.nombre.split(/\s+/)[0], String(p.id), unaLinea(p.direccion || "sin dirección", 100), unaLinea(cobroCorto(p, total), 100)];
+  const r = await enviarD360({
+    to, type: "template",
+    template: {
+      name: PLANTILLA_REPARTO, language: { code: PLANTILLA_IDIOMA },
+      components: [
+        { type: "body", parameters: params.map((t) => ({ type: "text", text: t })) },
+        { type: "button", sub_type: "quick_reply", index: "0", parameters: [{ type: "payload", payload: `rep:si:${p.id}` }] },
+        { type: "button", sub_type: "quick_reply", index: "1", parameters: [{ type: "payload", payload: `rep:no:${p.id}` }] },
+      ],
+    },
+  });
+  const texto = `🛵 Hola ${params[0]}, hay un pedido a domicilio disponible.\n\nPedido: #${params[1]}\nEntrega en: ${params[2]}\nCobro: ${params[3]}\n\n¿Puedes llevarlo?`;
+  if (r.ok) { await sb.from("wa_mensajes").insert({ telefono: to, rol: "bot", texto }); return { ...r, via: "plantilla" }; }
+  // Sin plantilla aprobada: botones normales (solo llegan si el repartidor escribió en las últimas 24 h)
+  const r2 = await enviarD360({
+    to, type: "interactive",
+    interactive: {
+      type: "button", body: { text: texto },
+      action: { buttons: [{ type: "reply", reply: { id: `rep:si:${p.id}`, title: "Sí, lo llevo" } }, { type: "reply", reply: { id: `rep:no:${p.id}`, title: "No puedo" } }] },
+    },
+  });
+  if (r2.ok) { await sb.from("wa_mensajes").insert({ telefono: to, rol: "bot", texto }); return { ...r2, via: "botones" }; }
+  return { ok: false, error: r.error };
+}
+
+// Ofrece el pedido al siguiente repartidor que no lo haya visto. Si ya no hay: «sin_repartidor» y alerta en el POS.
+async function ofrecerSiguiente(pedidoId: number): Promise<void> {
+  for (let vuelta = 0; vuelta < 20; vuelta++) {
+    const { data: p } = await sb.from("wa_pedidos").select("*").eq("id", pedidoId).maybeSingle();
+    if (!p || p.reparto_estado !== "buscando" || p.reparto_actual) return;
+    const intentos: Intento[] = p.reparto_intentos ?? [];
+    const siguiente = (await repartidores()).find((r) => !intentos.some((i) => i.rep === r.id));
+    if (!siguiente) {
+      await sb.from("wa_pedidos").update({ reparto_estado: "sin_repartidor", reparto_actual: null, reparto_avisado: false }).eq("id", pedidoId).eq("reparto_estado", "buscando");
+      return;
+    }
+    // apartar el turno (si otro proceso ya lo apartó, no hace nada)
+    const nuevo: Intento = { rep: siguiente.id, nombre: siguiente.nombre, enviado: new Date().toISOString(), estado: "esperando" };
+    const { data: ap } = await sb.from("wa_pedidos").update({ reparto_actual: siguiente.id, reparto_desde: nuevo.enviado, reparto_intentos: [...intentos, nuevo] })
+      .eq("id", pedidoId).eq("reparto_estado", "buscando").is("reparto_actual", null).select("id");
+    if (!ap?.length) return;
+    const r = await ofrecer(p, siguiente);
+    if (r.ok) {
+      nuevo.msg = r.id ?? null; nuevo.via = r.via;
+      await sb.from("wa_pedidos").update({ reparto_intentos: [...intentos, nuevo] }).eq("id", pedidoId).eq("reparto_actual", siguiente.id);
+      return;
+    }
+    nuevo.estado = "no le llegó";
+    await sb.from("wa_pedidos").update({ reparto_actual: null, reparto_intentos: [...intentos, nuevo] }).eq("id", pedidoId).eq("reparto_actual", siguiente.id);
+  }
+}
+
+async function iniciarReparto(pedidoId: number, reiniciar = false) {
+  const { data: p } = await sb.from("wa_pedidos").select("*").eq("id", pedidoId).maybeSingle();
+  if (!p) return { ok: false, error: "No existe ese pedido" };
+  if (p.entrega !== "domicilio") return { ok: true, omitido: "no es a domicilio" };
+  if (p.pedido_padre) { // lo agregado: si el pedido original ya tiene repartidor, se le avisa
+    const { data: padre } = await sb.from("wa_pedidos").select("*").eq("id", p.pedido_padre).maybeSingle();
+    if (padre?.reparto_estado === "asignado" && padre.repartidor_id) {
+      const rep = (await repartidores(false)).find((r) => r.id === padre.repartidor_id);
+      if (rep) {
+        const { total } = await pedidoCompleto(padre);
+        const lo = (p.items ?? []).map((l: any) => `• ${l.cantidad}x ${l.nombre}${l.detalle ? " (" + l.detalle + ")" : ""}`).join("\n");
+        await textoRepartidor(rep, `➕ Se agregó al pedido #${padre.id}:\n${lo}\n\nNuevo total: ${cobroCorto(padre, total)}`);
+      }
+    }
+    return { ok: true, omitido: "agregado a otro pedido" };
+  }
+  if (p.reparto_estado && !reiniciar) return { ok: true, ya: p.reparto_estado };
+  if (p.reparto_estado === "asignado" && reiniciar) return { ok: false, error: "Ya tiene repartidor" };
+  const reps = await repartidores();
+  if (!reps.length) {
+    await sb.from("wa_pedidos").update({ reparto_estado: "sin_repartidor", reparto_actual: null, reparto_intentos: [], reparto_avisado: false }).eq("id", pedidoId);
+    return { ok: true, sin_repartidores: true };
+  }
+  await sb.from("wa_pedidos").update({ reparto_estado: "buscando", reparto_actual: null, reparto_desde: null, reparto_intentos: [], repartidor_id: null, repartidor_nombre: null, reparto_avisado: true }).eq("id", pedidoId);
+  await ofrecerSiguiente(pedidoId);
+  return { ok: true };
+}
+
+function marcarIntento(intentos: Intento[], repId: number, estado: string): Intento[] {
+  const xs = [...(intentos ?? [])];
+  for (let i = xs.length - 1; i >= 0; i--) if (xs[i].rep === repId && xs[i].estado === "esperando") { xs[i] = { ...xs[i], estado }; break; }
+  return xs;
+}
+
+// Tiempo agotado, pedidos cancelados o mensajes que no llegaron. Corre con cada aviso de 360dialog y cada vez que el POS revisa.
+async function revisarReparto(fallidos: string[] = []) {
+  const { data } = await sb.from("wa_pedidos").select("id,estado,reparto_actual,reparto_desde,reparto_intentos").eq("reparto_estado", "buscando").limit(50);
+  if (!data?.length) return;
+  const min = Number((await config()).bot_reparto_minutos?.valor) || 4;
+  for (const p of data) {
+    if (!["aceptando", "aceptado", "listo"].includes(p.estado)) {
+      await sb.from("wa_pedidos").update({ reparto_estado: "cancelado", reparto_actual: null }).eq("id", p.id).eq("reparto_estado", "buscando");
+      continue;
+    }
+    if (!p.reparto_actual) { await ofrecerSiguiente(p.id); continue; }
+    const actual = (p.reparto_intentos ?? []).slice().reverse().find((i: Intento) => i.rep === p.reparto_actual && i.estado === "esperando");
+    const noLlego = actual?.msg && fallidos.includes(actual.msg);
+    const vencido = p.reparto_desde && Date.now() - new Date(p.reparto_desde).getTime() > min * 60 * 1000;
+    if (!noLlego && !vencido) continue;
+    const { data: ok } = await sb.from("wa_pedidos").update({ reparto_actual: null, reparto_intentos: marcarIntento(p.reparto_intentos, p.reparto_actual, noLlego ? "no le llegó" : "no contestó") })
+      .eq("id", p.id).eq("reparto_estado", "buscando").eq("reparto_actual", p.reparto_actual).select("id");
+    if (ok?.length) await ofrecerSiguiente(p.id);
+  }
+}
+
+// Respuesta de un repartidor. Regresa true si el mensaje era para el reparto (y no para el bot de pedidos).
+async function mensajeRepartidor(tel: string, texto: string, payload: string | null, waId: string | null): Promise<boolean> {
+  const rep = (await repartidores(false)).find((r) => diez(r.telefono) === diez(tel));
+  if (!rep) return false;
+  let acepta: boolean | null = null, pedidoId: number | null = null;
+  const m = /^rep:(si|no):(\d+)$/.exec(payload ?? "");
+  if (m) { acepta = m[1] === "si"; pedidoId = Number(m[2]); }
+  else {
+    const t = texto.trim().toLowerCase();
+    if (/^(s[ií]|sip|va|voy|acepto|yo lo llevo|s[ií],? lo llevo|ok|dale)\b/.test(t)) acepta = true;
+    else if (/^(no|no puedo|paso|ahorita no)\b/.test(t)) acepta = false;
+  }
+  const { data: ofertas } = await sb.from("wa_pedidos").select("*").eq("reparto_estado", "buscando").eq("reparto_actual", rep.id).order("id");
+  const c = await config();
+  const probadores = (c.bot_probadores?.texto ?? "").split(/[,;\s]+/).map(diez).filter((x) => x.length === 10);
+  // Texto libre sin oferta pendiente: si también es número de prueba, lo atiende el bot de pedidos
+  if (!m && (acepta === null || !ofertas?.length)) {
+    if (probadores.includes(diez(tel))) return false;
+    await sb.from("wa_mensajes").insert({ telefono: tel, rol: "cliente", texto, wa_id: waId });
+    await sb.from("wa_chats").upsert({ telefono: tel, nombre: `${rep.nombre} (repartidor)`, ultimo_mensaje: new Date().toISOString(), modo: "equipo" });
+    return true;
+  }
+  const ins = await sb.from("wa_mensajes").insert({ telefono: tel, rol: "cliente", texto, wa_id: waId });
+  if (ins.error) return true; // repetido
+  await sb.from("wa_chats").upsert({ telefono: tel, nombre: `${rep.nombre} (repartidor)`, ultimo_mensaje: new Date().toISOString(), modo: "equipo" });
+  const p = (ofertas ?? []).find((o: any) => !pedidoId || o.id === pedidoId);
+  if (!p) {
+    const { data: q } = await sb.from("wa_pedidos").select("id,repartidor_id").eq("id", pedidoId ?? 0).maybeSingle();
+    await textoRepartidor(rep, q?.repartidor_id === rep.id ? `Ese pedido (#${q.id}) ya es tuyo 👍` : `Gracias ${rep.nombre.split(/\s+/)[0]} 🙏 ese pedido ya lo tomó otro compañero.`);
+    return true;
+  }
+  if (acepta) {
+    const { data: ok } = await sb.from("wa_pedidos").update({
+      reparto_estado: "asignado", repartidor_id: rep.id, repartidor_nombre: rep.nombre, reparto_actual: null,
+      reparto_intentos: marcarIntento(p.reparto_intentos, rep.id, "aceptó"), reparto_avisado: false,
+    }).eq("id", p.id).eq("reparto_estado", "buscando").eq("reparto_actual", rep.id).select("id");
+    if (!ok?.length) { await textoRepartidor(rep, `Gracias 🙏 ese pedido ya lo tomó otro compañero.`); return true; }
+    await textoRepartidor(rep, await detallesParaRepartidor(p, rep));
+  } else {
+    const { data: ok } = await sb.from("wa_pedidos").update({ reparto_actual: null, reparto_intentos: marcarIntento(p.reparto_intentos, rep.id, "no puede") })
+      .eq("id", p.id).eq("reparto_estado", "buscando").eq("reparto_actual", rep.id).select("id");
+    await textoRepartidor(rep, `Sin problema 👍 se lo pasamos a otro compañero.`);
+    if (ok?.length) await ofrecerSiguiente(p.id);
+  }
+  return true;
+}
+
+// Plantilla de Meta para ofrecer pedidos (se crea una vez; Meta la revisa y la aprueba)
+async function plantillaReparto(crear: boolean) {
+  const h = { "D360-API-KEY": D360_KEY, "Content-Type": "application/json" };
+  if (crear) {
+    const r = await fetch(`${D360_BASE}/message_templates`, {
+      method: "POST", headers: h,
+      body: JSON.stringify({
+        name: PLANTILLA_REPARTO, language: PLANTILLA_IDIOMA, category: "UTILITY",
+        components: [
+          { type: "BODY", text: "Hola {{1}}, hay un pedido a domicilio disponible.\n\nPedido: #{{2}}\nEntrega en: {{3}}\nCobro: {{4}}\n\n¿Puedes llevarlo? Contesta con uno de los botones.",
+            example: { body_text: [["Juan", "125", "Col. República, Saltillo", "$128 en efectivo"]] } },
+          { type: "BUTTONS", buttons: [{ type: "QUICK_REPLY", text: "Sí, lo llevo" }, { type: "QUICK_REPLY", text: "No puedo" }] },
+        ],
+      }),
+    });
+    return { status: r.status, respuesta: (await r.text()).slice(0, 1500) };
+  }
+  const r = await fetch(`${D360_BASE}/message_templates?limit=200`, { headers: h });
+  const t = await r.text();
+  let j: any = {}; try { j = JSON.parse(t); } catch (_) { /* */ }
+  const lista = j.waba_templates ?? j.data ?? j.templates ?? [];
+  const mia = (Array.isArray(lista) ? lista : []).filter((x: any) => x.name === PLANTILLA_REPARTO)
+    .map((x: any) => ({ nombre: x.name, idioma: x.language, estado: x.status, motivo: x.rejected_reason ?? null, categoria: x.category }));
+  return { status: r.status, plantilla: mia, total: Array.isArray(lista) ? lista.length : null, crudo: mia.length ? undefined : t.slice(0, 500) };
 }
 
 // ---------- servidor ----------
@@ -681,6 +944,21 @@ Deno.serve(async (req) => {
     await enviarWhatsApp(p.telefono, texto);
     return json({ ok: true, texto });
   }
+
+  // Reparto a domicilio (desde el POS)
+  if (body.accion === "reparto_iniciar") return json(await iniciarReparto(Number(body.pedido_id), !!body.reiniciar));
+  if (body.accion === "reparto_revisar") { await revisarReparto(); return json({ ok: true }); }
+  if (body.accion === "reparto_manual") {
+    const rep = (await repartidores(false)).find((r) => r.id === Number(body.repartidor_id));
+    if (!rep) return json({ ok: false, error: "No existe ese repartidor" }, 404);
+    const { data: p } = await sb.from("wa_pedidos").select("*").eq("id", Number(body.pedido_id)).maybeSingle();
+    if (!p) return json({ ok: false, error: "No existe ese pedido" }, 404);
+    await sb.from("wa_pedidos").update({ reparto_estado: "asignado", repartidor_id: rep.id, repartidor_nombre: rep.nombre, reparto_actual: null, reparto_avisado: true,
+      reparto_intentos: [...(p.reparto_intentos ?? []), { rep: rep.id, nombre: rep.nombre, enviado: new Date().toISOString(), estado: "asignado a mano" }] }).eq("id", p.id);
+    const r = await textoRepartidor(rep, await detallesParaRepartidor(p, rep));
+    return json({ ok: true, mensaje: r.ok });
+  }
+  if (body.accion === "reparto_plantilla") return json(await plantillaReparto(!!body.crear));
 
   // Simulador del POS: nunca manda WhatsApp, siempre con el teléfono SIMULADOR
   if (body.simulador) {
