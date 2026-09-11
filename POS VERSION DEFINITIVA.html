@@ -4703,6 +4703,18 @@ function waNotaLinea(l){
   return partes.join(', ');
 }
 
+// Busca al cliente por los últimos 10 dígitos de su teléfono; si no existe lo da de alta. Nunca detiene el cobro.
+function waCliente(ped){
+  var d = String(ped.telefono || '').replace(/\D/g, '').slice(-10);
+  if (d.length < 10) return Promise.resolve(null);
+  return sbFetch('clientes?select=id,telefono,visitas&limit=10000').then(function(cs){
+    var c = (cs || []).find(function(x){ return String(x.telefono || '').replace(/\D/g, '').slice(-10) === d; });
+    if (c) return sbFetch('clientes?id=eq.' + c.id, 'PATCH', {visitas: (c.visitas || 0) + 1}).then(function(){ return c.id; }, function(){ return c.id; });
+    return sbFetch('clientes', 'POST', {nombre: ped.nombre || ('WhatsApp ' + d), telefono: '+52' + d, visitas: 1, puntos: 0})
+      .then(function(r){ return r && r[0] ? r[0].id : null; });
+  }).catch(function(){ return null; });
+}
+
 function waAceptar(id){
   if (waOcupado[id]) return; waOcupado[id] = true; waCargarPedidos();
   var ped;
@@ -4715,9 +4727,12 @@ function waAceptar(id){
     var notas = '📱 WhatsApp #' + ped.id + (ped.pedido_padre ? ' (agregado al #' + ped.pedido_padre + ')' : '') + ' · ' + (ped.nombre || '') + ' · ' + waTel(ped.telefono) +
       (ped.paga_con ? ' · Paga con ' + waDinero(ped.paga_con) : '') + (ped.referencias ? ' · Ref: ' + ped.referencias : '') + (ped.notas ? ' · ' + ped.notas : '');
     if (ped.promos && ped.promos.length) notas += ' · ' + ped.promos.map(function(a){ return promoTexto(a) + ' -$' + Number(a.descuento).toFixed(2); }).join(' · ');
-    return sbFetch('ventas', 'POST', {subtotal: Number(ped.subtotal), descuento: Number(ped.descuento || 0), costo_envio: Number(ped.envio || 0), total: Number(ped.total),
-      metodo_pago: ped.pago, tipo_servicio: dom ? 'delivery' : 'para_llevar', canal: dom ? 'delivery_propio' : 'local',
-      notas: notas, estado: 'pagada', direccion_entrega: dom ? (ped.direccion || null) : null, lat: dom ? ped.lat : null, lng: dom ? ped.lng : null});
+    // ligar la venta al cliente (por su teléfono) para Delivery › clientes recurrentes y valor por cliente
+    return waCliente(ped).then(function(cid){
+      return sbFetch('ventas', 'POST', {subtotal: Number(ped.subtotal), descuento: Number(ped.descuento || 0), costo_envio: Number(ped.envio || 0), total: Number(ped.total),
+        metodo_pago: ped.pago, tipo_servicio: dom ? 'delivery' : 'para_llevar', canal: dom ? 'delivery_propio' : 'local', cliente_id: cid,
+        notas: notas, estado: 'pagada', direccion_entrega: dom ? (ped.direccion || null) : null, lat: dom ? ped.lat : null, lng: dom ? ped.lng : null});
+    });
   }).then(function(v){
     if (!v) return;
     var vid = v[0].id; ped.venta_id = vid;
