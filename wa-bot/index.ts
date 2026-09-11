@@ -33,6 +33,12 @@ const CORS = {
 };
 const json = (o: unknown, status = 200) =>
   new Response(JSON.stringify(o), { status, headers: { ...CORS, "Content-Type": "application/json" } });
+// «844 123 4567, 844 765 4321» → ["8441234567", "8447654321"] (acepta comas, renglones, espacios o guiones)
+const listaTels = (t: string | null | undefined) => String(t ?? "").split(/[,;\n\/]+/).flatMap((parte) => {
+  const d = parte.replace(/\D/g, "");
+  if (d.length >= 20) return d.match(/\d{12,13}(?=\d{10,13}|$)|\d{10}/g) ?? [];
+  return d.length >= 10 ? [d.slice(-10)] : [];
+}).map((x) => x.slice(-10));
 const dinero = (n: number) => "$" + (Math.round(n * 100) / 100).toLocaleString("es-MX", { minimumFractionDigits: 0, maximumFractionDigits: 2 });
 const ahoraLocal = () =>
   new Date().toLocaleString("es-MX", { timeZone: TZ, weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
@@ -365,7 +371,7 @@ async function atender(tel: string, nombre: string, texto: string, extra: { lat?
   // bot_activo: 0 = apagado · 1 = contesta a todos · 2 = solo a los números de prueba (bot_probadores)
   const modoBot = Number(c.bot_activo?.valor ?? 0);
   const diez = (x: string) => String(x).replace(/\D/g, "").slice(-10);
-  const probadores = (c.bot_probadores?.texto ?? "").split(/[,;\s]+/).map(diez).filter((x) => x.length === 10);
+  const probadores = listaTels(c.bot_probadores?.texto);
   if (!extra.simulado && !(modoBot === 1 || (modoBot === 2 && probadores.includes(diez(tel))))) return { ok: true, apagado: true };
   if (chat?.modo === "equipo" && chat.pausado_hasta && new Date(chat.pausado_hasta) > new Date()) return { ok: true, con_equipo: true };
 
@@ -709,7 +715,8 @@ async function detallesParaRepartidor(p: any, rep: Rep) {
 async function ofrecer(p: any, rep: Rep): Promise<{ ok: boolean; id?: string; via?: string; error?: string }> {
   const { total } = await pedidoCompleto(p);
   const to = telWa(rep.telefono);
-  const params = [rep.nombre.split(/\s+/)[0], String(p.id), unaLinea(p.direccion || "sin dirección", 100), unaLinea(cobroCorto(p, total), 100)];
+  // sin nombre del repartidor: el aviso es igual para todos (así lo pidió Alfredo)
+  const params = [String(p.id), unaLinea(p.direccion || "sin dirección", 100), unaLinea(cobroCorto(p, total), 100)];
   const r = await enviarD360({
     to, type: "template",
     template: {
@@ -721,7 +728,7 @@ async function ofrecer(p: any, rep: Rep): Promise<{ ok: boolean; id?: string; vi
       ],
     },
   });
-  const texto = `🛵 Hola ${params[0]}, hay un pedido a domicilio disponible.\n\nPedido: #${params[1]}\nEntrega en: ${params[2]}\nCobro: ${params[3]}\n\n¿Puedes llevarlo?`;
+  const texto = `🛵 Hay un pedido a domicilio disponible.\n\nPedido: #${params[0]}\nEntrega en: ${params[1]}\nCobro: ${params[2]}\n\n¿Puedes llevarlo?`;
   if (r.ok) { await sb.from("wa_mensajes").insert({ telefono: to, rol: "bot", texto }); return { ...r, via: "plantilla" }; }
   // Sin plantilla aprobada: botones normales (solo llegan si el repartidor escribió en las últimas 24 h)
   const r2 = await enviarD360({
@@ -826,12 +833,13 @@ async function mensajeRepartidor(tel: string, texto: string, payload: string | n
   if (m) { acepta = m[1] === "si"; pedidoId = Number(m[2]); }
   else {
     const t = texto.trim().toLowerCase();
-    if (/^(s[ií]|sip|va|voy|acepto|yo lo llevo|s[ií],? lo llevo|ok|dale)\b/.test(t)) acepta = true;
-    else if (/^(no|no puedo|paso|ahorita no)\b/.test(t)) acepta = false;
+    const fin = "(?=[\\s,.!👍]|$)";
+    if (new RegExp("^(s[ií]|sip|va|voy|acepto|yo lo llevo|ok|dale)" + fin, "u").test(t)) acepta = true;
+    else if (new RegExp("^(no|paso|ahorita no)" + fin, "u").test(t)) acepta = false;
   }
   const { data: ofertas } = await sb.from("wa_pedidos").select("*").eq("reparto_estado", "buscando").eq("reparto_actual", rep.id).order("id");
   const c = await config();
-  const probadores = (c.bot_probadores?.texto ?? "").split(/[,;\s]+/).map(diez).filter((x) => x.length === 10);
+  const probadores = listaTels(c.bot_probadores?.texto);
   // Texto libre sin oferta pendiente: si también es número de prueba, lo atiende el bot de pedidos
   if (!m && (acepta === null || !ofertas?.length)) {
     if (probadores.includes(diez(tel))) return false;
@@ -873,8 +881,8 @@ async function plantillaReparto(crear: boolean) {
       body: JSON.stringify({
         name: PLANTILLA_REPARTO, language: PLANTILLA_IDIOMA, category: "UTILITY",
         components: [
-          { type: "BODY", text: "Hola {{1}}, hay un pedido a domicilio disponible.\n\nPedido: #{{2}}\nEntrega en: {{3}}\nCobro: {{4}}\n\n¿Puedes llevarlo? Contesta con uno de los botones.",
-            example: { body_text: [["Juan", "125", "Col. República, Saltillo", "$128 en efectivo"]] } },
+          { type: "BODY", text: "Hay un pedido a domicilio disponible.\n\nPedido: #{{1}}\nEntrega en: {{2}}\nCobro: {{3}}\n\n¿Puedes llevarlo? Contesta con uno de los botones.",
+            example: { body_text: [["125", "Col. República, Saltillo", "$128 en efectivo"]] } },
           { type: "BUTTONS", buttons: [{ type: "QUICK_REPLY", text: "Sí, lo llevo" }, { type: "QUICK_REPLY", text: "No puedo" }] },
         ],
       }),
