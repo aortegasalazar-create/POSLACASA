@@ -36,6 +36,9 @@
 .wa-alerta{position:fixed;left:50%;transform:translateX(-50%);top:76px;z-index:9000;background:#16a34a;color:#fff;border-radius:16px;padding:14px 20px;display:flex;gap:16px;align-items:center;font-size:15px;box-shadow:0 12px 36px rgba(0,0,0,.45);cursor:pointer;animation:waLatido 1.6s ease-in-out infinite;max-width:calc(100vw - 32px);}
 .wa-alerta[hidden]{display:none!important;}
 .rep-alerta{top:auto;bottom:24px;background:#1d4ed8;animation:none;}
+.av-alerta{top:140px;background:#ea580c;flex-direction:column;align-items:stretch;gap:8px;}
+.av-alerta .av-f{display:flex;gap:14px;align-items:center;justify-content:space-between;}
+.av-alerta span{color:#c2410c;}
 .rep-alerta.malo{background:#dc2626;animation:waLatido 1.6s ease-in-out infinite;}
 .rep-alerta span{color:#1d4ed8;}
 .rep-alerta.malo span{color:#b91c1c;}
@@ -3117,6 +3120,7 @@ cargarDatos();
 <!-- VISTA CORTE DE CAJA (ORP) -->
 <div id="wa-alerta" class="wa-alerta" hidden onclick="waIrAlerta()"></div>
 <div id="rep-alerta" class="wa-alerta rep-alerta" hidden onclick="repIrAlerta()"></div>
+<div id="av-alerta" class="wa-alerta av-alerta" hidden></div>
 <div class="vista" id="vista-whatsapp">
   <div class="orp-page">
     <div class="orp-top">
@@ -4588,6 +4592,37 @@ function waRevisar(){
     if (v && v.classList.contains('active') && (waSec === 'pedidos' || waSec === 'chats')) waCargar();
   }).catch(function(){});
 }
+// Avisos del bot: un repartidor (o cliente) escribió algo que el equipo tiene que resolver. Suena y se queda hasta «Enterado».
+var avYaSono = {};
+function avRevisar(){
+  sbFetch('wa_chats?contexto->aviso->>estado=eq.pendiente&telefono=neq.SIMULADOR&select=telefono,nombre,contexto&order=ultimo_mensaje.desc&limit=20').then(function(r){
+    var el = document.getElementById('av-alerta');
+    if (!r.length) { el.hidden = true; return; }
+    var nuevo = r.some(function(c){ return !avYaSono[c.telefono + c.contexto.aviso.creado]; });
+    r.forEach(function(c){ avYaSono[c.telefono + c.contexto.aviso.creado] = 1; });
+    if (nuevo) waSonar();
+    el.innerHTML = r.map(function(c){
+      var a = c.contexto.aviso || {}, p = a.pedido || null;
+      var quien = a.quien === 'repartidor' ? '🛵 Repartidor' : '👤 Cliente';
+      var plat = a.plataforma && a.plataforma !== 'propio' && a.plataforma !== 'no se sabe' ? ' · ' + waEsc(a.plataforma.toUpperCase()) : '';
+      var ped = p ? '<br><small>Pedido #' + p.id + (p.cliente ? ' · ' + waEsc(p.cliente) : '') + (p.tel ? ' · ' + waTel(p.tel) : '') + (p.direccion ? ' · ' + waEsc(p.direccion) : '') + '</small>' : '';
+      return '<div class="av-f" onclick="avAbrir(\'' + waEsc(c.telefono) + '\')"><div>' + quien + plat + ' <b>' + waEsc(c.nombre || waTel(c.telefono)) + '</b> · ' + waTel(c.telefono) + '<br><b>' + waEsc(a.tema || '') + '</b>' + ped + '</div>' +
+        '<span onclick="event.stopPropagation();avEnterado(\'' + waEsc(c.telefono) + '\')">Enterado</span></div>';
+    }).join('');
+    el.hidden = false;
+  }).catch(function(){});
+}
+function avAbrir(tel){
+  irVista('whatsapp', document.querySelector('.nav-tab[data-vista=whatsapp]'));
+  waChatSel = tel; waSeccion('chats');
+}
+function avEnterado(tel){
+  sbFetch('wa_chats?telefono=eq.' + encodeURIComponent(tel) + '&select=contexto').then(function(r){
+    var ctx = (r[0] && r[0].contexto) || {};
+    if (ctx.aviso) { ctx.aviso.estado = 'atendido'; ctx.aviso.atendido = new Date().toISOString(); }
+    return sbFetch('wa_chats?telefono=eq.' + encodeURIComponent(tel), 'PATCH', {contexto: ctx});
+  }).then(function(){ avRevisar(); }).catch(function(e){ toast(e.message, true); });
+}
 function waIrAlerta(){
   waFil = 'nuevo';
   irVista('whatsapp', document.querySelector('.nav-tab[data-vista=whatsapp]'));
@@ -4596,6 +4631,7 @@ function waIrAlerta(){
 function waIniciar(){
   if (window._waIniciado) return; window._waIniciado = true;
   waRevisar(); setInterval(waRevisar, 10000);
+  avRevisar(); setInterval(avRevisar, 10000);
   waCargarCfg();
 }
 
@@ -4852,7 +4888,8 @@ function waCargarChats(){
       return '<div class="wa-ch' + (c.telefono === waChatSel ? ' sel' : '') + '" onclick="waChatSel=\'' + waEsc(c.telefono) + '\';waCargarChats()">' +
         '<div><b>' + waEsc(c.nombre || waTel(c.telefono)) + '</b><small>' + waTel(c.telefono) + ' · ' + waCuando(c.ultimo_mensaje) + '</small></div>' +
         '<span class="orp-pill" style="' + (equipo ? 'background:rgba(34,181,115,.15);color:#4ade80' : 'background:rgba(47,111,237,.18);color:#9dbbff') + '">' +
-        (equipo ? '👤 Equipo' : '🤖 Bot') + '</span></div>';
+        (equipo ? '👤 Equipo' : '🤖 Bot') + '</span>' +
+        (c.contexto && c.contexto.aviso && c.contexto.aviso.estado === 'pendiente' ? '<span class="orp-pill" style="background:rgba(234,88,12,.2);color:#fb923c;margin-left:6px">⚠️ Aviso</span>' : '') + '</div>';
     }).join('') : '<div class="wa-vacio">Todavía no hay conversaciones.</div>';
     var c = r.find(function(x){ return x.telefono === waChatSel; });
     if (!c) { if (!waChatSel) { document.getElementById('wa-conv').innerHTML = ''; document.getElementById('wa-conv-btns').innerHTML = ''; } return; }
