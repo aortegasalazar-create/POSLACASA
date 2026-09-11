@@ -187,6 +187,7 @@ const TOOLS = [
       direccion: { type: "string" },
       pago: { type: "string", enum: ["efectivo", "transferencia"] },
       nombre: { type: "string" },
+      agregar_a: { type: "integer", description: "Folio del pedido reciente del cliente si SOLO quiere agregarle productos (items = únicamente lo nuevo)" },
     }, required: ["items"] },
   },
   {
@@ -206,7 +207,8 @@ const TOOLS = [
         toppings_preguntados: { type: "boolean", description: "true cuando el cliente ya dijo si lo quiere con todos los toppings o sin alguno" },
       }, required: ["producto_id"] } },
       notas: { type: "string" },
-    }, required: ["nombre", "entrega", "pago", "items"] },
+      agregar_a: { type: "integer", description: "Folio del pedido reciente al que se agregan productos (items = únicamente lo nuevo)" },
+    }, required: ["items"] },
   },
   {
     name: "pasar_a_humano",
@@ -215,7 +217,7 @@ const TOOLS = [
   },
 ];
 
-function reglas(c: Awaited<ReturnType<typeof config>>) {
+function reglas(c: Awaited<ReturnType<typeof config>>, reciente: string) {
   const t = (k: string) => (c[k]?.texto ?? "").trim();
   return `Eres quien toma los pedidos por WhatsApp de una cocina en Saltillo que tiene dos marcas: LA CASA DEL CHILAQUIL (chilaquiles) y DELIGORDAS (gorditas). Es la misma cocina: en un solo pedido pueden venir productos de las dos.
 
@@ -240,10 +242,12 @@ CÓMO ATIENDES
 - Nunca digas un total sin usar antes revisar_pedido.
 - CIERRE: cuando ya tengas TODO (productos con sus opciones y toppings, pickup o domicilio con dirección, forma de pago y nombre), usa revisar_pedido con todo eso y manda UN resumen final completo: cada producto con su detalle, entrega (y dirección), pago, nombre y el *total*. Termina preguntando "¿Es correcto? ¿Es todo?".
 - Solo si el cliente responde a ese resumen con algo afirmativo (sí, ok, correcto, así está bien, es todo, va, dale, 👍…) usa registrar_pedido con exactamente lo mismo. Si agrega o cambia algo, vuelve a usar revisar_pedido y a confirmar. El sistema no te deja registrar sin ese resumen confirmado.
+- AGREGAR A UN PEDIDO: si el cliente ya tiene un pedido reciente (abajo) y quiere sumarle algo ("agrégame…", "también quiero…", "se me olvidó…"), NO hagas un pedido completo nuevo ni repitas lo que ya pidió. Usa revisar_pedido y registrar_pedido con agregar_a=<folio> y en items SOLO lo nuevo. Resumen corto: "Agregamos a tu pedido #N: … Nuevo total: *$X*. ¿Es correcto?". Si es efectivo a domicilio, confirma con cuánto paga ahora. Si el sistema dice que ese pedido ya salió, díselo y ofrécele hacerlo como pedido nuevo (con su propio envío).
 - Ya registrado, dale su número de pedido y, si paga con transferencia, pídele que mande aquí la foto del comprobante.
 - Si algo no está claro o no lo sabes, pregunta o usa pasar_a_humano. Nunca prometas algo que no está aquí.
 - Si te escriben algo que no tiene que ver con pedidos, contesta breve y amable y regresa al pedido.
 
+${reciente ? "PEDIDO RECIENTE DE ESTE CLIENTE:\n" + reciente + "\n" : ""}
 MENÚ (ids entre corchetes; los precios son exactos):`;
 }
 
@@ -315,8 +319,9 @@ async function atender(tel: string, nombre: string, texto: string, extra: { lat?
   // 3) platicar con Claude
   const excluir = (c.bot_excluir?.texto ?? "").split(",").map((x) => Number(x.trim())).filter(Boolean);
   const menu = await cargarMenu(excluir);
+  const reciente = await pedidoReciente(tel);
   const system = [
-    { type: "text", text: reglas(c) },
+    { type: "text", text: reglas(c, reciente) },
     { type: "text", text: menuTexto(menu), cache_control: { type: "ephemeral" } },
   ];
   const modelo = (c.bot_modelo?.texto || "claude-haiku-4-5-20251001").trim();
@@ -346,12 +351,86 @@ async function atender(tel: string, nombre: string, texto: string, extra: { lat?
   return { ok: true, respuesta, pedido, tokens: { entrada: tin, salida: tout }, modelo };
 }
 
+// Último pedido del cliente (12 h) con lo que ya se le agregó: el bot lo usa para ampliaciones
+async function datosReciente(tel: string) {
+  const desde = new Date(Date.now() - 12 * 3600 * 1000).toISOString();
+  const { data } = await sb.from("wa_pedidos").select("*").eq("telefono", tel).gte("creado", desde)
+    .is("pedido_padre", null).neq("estado", "rechazado").order("id", { ascending: false }).limit(1);
+  const p = data?.[0];
+  if (!p) return null;
+  const { data: hijos } = await sb.from("wa_pedidos").select("id,items,total,estado").eq("pedido_padre", p.id).neq("estado", "rechazado");
+  const total = Number(p.total) + (hijos ?? []).reduce((s: number, h: any) => s + Number(h.total), 0);
+  return { p, hijos: hijos ?? [], total };
+}
+async function pedidoReciente(tel: string) {
+  const r = await datosReciente(tel);
+  if (!r) return "";
+  const est: Record<string, string> = { nuevo: "recibido, todavía no lo acepta la cocina", aceptando: "aceptado, en preparación", aceptado: "aceptado, en preparación", listo: r.p.entrega === "domicilio" ? "YA SALIÓ a entrega" : "listo para recoger" };
+  const lineas = [...(r.p.items ?? []), ...r.hijos.flatMap((h: any) => h.items ?? [])]
+    .map((l: any) => `${l.cantidad}x ${l.nombre}${l.detalle ? " (" + l.detalle + ")" : ""}`).join("; ");
+  return `Folio #${r.p.id} · estado: ${est[r.p.estado] ?? r.p.estado} · ${r.p.entrega}${r.p.direccion ? " a " + r.p.direccion : ""} · pago ${r.p.pago} · total actual ${dinero(r.total)} · lleva: ${lineas}`;
+}
+
 // Huella del pedido: si el cliente confirma un resumen, lo que se registra tiene que ser exactamente eso
 function firmaPedido(lineas: any[], input: any) {
   return JSON.stringify({
     l: lineas.map((l) => [l.producto_id, l.cantidad, [...l.opciones].sort(), [...l.sin].sort(), l.extras.map((e: any) => [e.opcion_id, e.cantidad]).sort()]).sort(),
-    e: input.entrega ?? "", p: input.pago ?? "",
+    e: input.entrega ?? "", p: input.pago ?? "", a: input.agregar_a ?? null,
   });
+}
+
+// Agregar productos a un pedido que el cliente ya hizo
+async function ampliar(nombre: string, input: any, ctx: { tel: string; nombre: string; contexto: any; menu: any; simulado: boolean; msgId: number }) {
+  const r = await datosReciente(ctx.tel);
+  if (!r || r.p.id !== Number(input.agregar_a)) {
+    return { ok: false, errores: [`No encuentro un pedido reciente #${input.agregar_a} de este cliente. Si quiere algo más, hazlo como pedido nuevo.`] };
+  }
+  if (r.p.estado === "listo") {
+    return { ok: false, errores: [`El pedido #${r.p.id} ya ${r.p.entrega === "domicilio" ? "salió a entrega" : "está listo"}; ya no se le puede agregar. Ofrécele un pedido nuevo${r.p.entrega === "domicilio" ? " (con su propio envío)" : ""}.`] };
+  }
+  const v = valorarItems(input.items, ctx.menu);
+  if (v.errores.length) return { ok: false, errores: v.errores };
+  const nuevoTotal = r.total + v.subtotal;
+  const resumen = v.lineas.map((l: any) => `${l.cantidad}x ${l.nombre}${l.detalle ? " (" + l.detalle + ")" : ""} — ${dinero(l.importe)}`);
+  const firma = firmaPedido(v.lineas, { agregar_a: r.p.id, entrega: r.p.entrega, pago: r.p.pago });
+  if (nombre === "revisar_pedido") {
+    const previa = ctx.contexto.revision;
+    ctx.contexto.revision = previa && previa.firma === firma ? previa : { firma, msg: ctx.msgId };
+    await sb.from("wa_chats").update({ contexto: ctx.contexto }).eq("telefono", ctx.tel);
+    return { ok: true, pedido: r.p.id, se_agrega: resumen, subtotal_agregado: v.subtotal, total_anterior: r.total, nuevo_total: nuevoTotal,
+      pago: r.p.pago, paga_con_anterior: r.p.paga_con,
+      siguiente: "Dile qué se agrega al pedido #" + r.p.id + " y el nuevo total, y pregunta si es correcto. Registra solo cuando conteste que sí." };
+  }
+  const rev = ctx.contexto.revision;
+  if (!rev || rev.firma !== firma) return { ok: false, errores: ["Antes usa revisar_pedido con agregar_a y estos mismos productos, dile el nuevo total y espera su sí."] };
+  if (!(ctx.msgId > rev.msg)) return { ok: false, errores: ["El cliente todavía no confirma lo que se agrega. Pregúntale si es correcto y espera su respuesta."] };
+  const pagaCon = input.paga_con ?? r.p.paga_con ?? null;
+  if (r.p.pago === "efectivo" && pagaCon && Number(pagaCon) < nuevoTotal) {
+    return { ok: false, errores: [`Antes pagaba con ${dinero(pagaCon)} pero el nuevo total es ${dinero(nuevoTotal)}. Pregúntale con cuánto paga ahora.`] };
+  }
+  const nota = (t: any, x: string) => [t, x].filter(Boolean).join(" · ");
+  let folio = r.p.id, ampliacion = false;
+  if (r.p.estado === "nuevo") {
+    // La cocina todavía no lo acepta: se actualiza el mismo pedido
+    const { error } = await sb.from("wa_pedidos").update({
+      items: [...(r.p.items ?? []), ...v.lineas], subtotal: Number(r.p.subtotal) + v.subtotal, total: Number(r.p.total) + v.subtotal,
+      paga_con: pagaCon, notas: nota(r.p.notas, "➕ El cliente agregó: " + resumen.join("; ")), actualizado: new Date().toISOString(),
+    }).eq("id", r.p.id).eq("estado", "nuevo");
+    if (error) return { ok: false, errores: ["No se pudo actualizar: " + error.message] };
+  } else {
+    // Ya aceptado: va como ampliación, solo con lo nuevo (así la venta no se cuenta dos veces)
+    const { data, error } = await sb.from("wa_pedidos").insert({
+      telefono: ctx.tel, nombre: r.p.nombre, estado: "nuevo", entrega: r.p.entrega, direccion: r.p.direccion, referencias: r.p.referencias,
+      lat: r.p.lat, lng: r.p.lng, km: r.p.km, pago: r.p.pago, paga_con: pagaCon, items: v.lineas, subtotal: v.subtotal, envio: 0, total: v.subtotal,
+      notas: nota(input.notas, `Agregado al pedido #${r.p.id}. Total del pedido completo: ${dinero(nuevoTotal)}`), simulado: r.p.simulado, pedido_padre: r.p.id,
+    }).select("id").single();
+    if (error) return { ok: false, errores: ["No se pudo guardar: " + error.message] };
+    folio = data.id; ampliacion = true;
+  }
+  ctx.contexto.revision = null;
+  await sb.from("wa_chats").update({ contexto: ctx.contexto }).eq("telefono", ctx.tel);
+  return { ok: true, folio: r.p.id, registro: folio, ampliacion, agregado: resumen, subtotal_agregado: v.subtotal, nuevo_total: nuevoTotal,
+    nota: `Dile que ya quedó agregado a su pedido #${r.p.id} y el nuevo total. No le des otro número de pedido.` };
 }
 
 async function herramienta(nombre: string, input: any, ctx: { tel: string; nombre: string; contexto: any; menu: any; simulado: boolean; msgId: number }) {
@@ -364,9 +443,15 @@ async function herramienta(nombre: string, input: any, ctx: { tel: string; nombr
     }
     return r;
   }
+  if ((nombre === "revisar_pedido" || nombre === "registrar_pedido") && input.agregar_a) {
+    return await ampliar(nombre, input, ctx);
+  }
   if (nombre === "revisar_pedido" || nombre === "registrar_pedido") {
     const v = valorarItems(input.items, ctx.menu);
     if (v.errores.length) return { ok: false, errores: v.errores };
+    if (nombre === "registrar_pedido" && (!input.nombre && !ctx.nombre || !input.entrega || !input.pago)) {
+      return { ok: false, errores: ["Faltan datos: " + [!input.entrega && "entrega", !input.pago && "pago", !(input.nombre || ctx.nombre) && "nombre"].filter(Boolean).join(", ")] };
+    }
     let envio = 0, cot: any = null;
     if (input.entrega === "domicilio") {
       cot = ctx.contexto.cotizacion;
@@ -488,7 +573,7 @@ Deno.serve(async (req) => {
 
   // Avisos al cliente desde el POS (solo 3 textos fijos y una vez por pedido: no sirve para mandar otra cosa)
   if (body.accion === "aviso") {
-    const { data: p } = await sb.from("wa_pedidos").select("id,telefono,nombre,entrega").eq("id", Number(body.pedido_id)).maybeSingle();
+    const { data: p } = await sb.from("wa_pedidos").select("id,telefono,nombre,entrega,items,total,pedido_padre").eq("id", Number(body.pedido_id)).maybeSingle();
     if (!p) return json({ ok: false, error: "No existe ese pedido" }, 404);
     const c = await config();
     const t = (k: string) => (c[k]?.texto ?? "").trim();
@@ -501,6 +586,17 @@ Deno.serve(async (req) => {
       listo: p.entrega === "domicilio" ? `🛵 Tu pedido #${p.id} ya va en camino.` : `🥡 Tu pedido #${p.id} ya está listo para recoger.`,
       rechazado: `Una disculpa 🙏 por ahora no podemos tomar tu pedido #${p.id}. En un momento te escribe alguien del equipo.`,
     };
+    if (p.pedido_padre) { // ampliación: se avisa sobre el pedido original
+      if (body.tipo === "listo") return json({ ok: true, omitido: true });
+      const { data: padre } = await sb.from("wa_pedidos").select("total,items").eq("id", p.pedido_padre).maybeSingle();
+      const { data: hs } = await sb.from("wa_pedidos").select("id,total,items").eq("pedido_padre", p.pedido_padre).in("estado", ["aceptando", "aceptado", "listo"]).order("id");
+      const tot = Number(padre?.total ?? 0) + (hs ?? []).reduce((s: number, h: any) => s + Number(h.total), 0);
+      const lo = (p.items ?? []).map((l: any) => `${l.cantidad}x ${l.nombre}`).join(", ");
+      const todo = [...(padre?.items ?? []), ...(hs ?? []).flatMap((h: any) => h.items ?? [])]
+        .map((l: any) => `• ${l.cantidad}x ${l.nombre}${l.detalle ? " (" + l.detalle + ")" : ""}`).join("\n");
+      textos.aceptado = `✅ ${quien ? quien + ", ya" : "Ya"} agregamos a tu pedido #${p.pedido_padre}: ${lo}.\n\nTu pedido completo:\n${todo}\n\nNuevo total: *${dinero(tot)}*`;
+      textos.rechazado = `Una disculpa 🙏 no pudimos agregar ${lo} a tu pedido #${p.pedido_padre}. En un momento te escribe alguien del equipo.`;
+    }
     const texto = textos[String(body.tipo)];
     if (!texto) return json({ ok: false, error: "Aviso desconocido" }, 400);
     const ins = await sb.from("wa_mensajes").insert({ telefono: p.telefono, rol: "bot", texto, wa_id: `aviso:${p.id}:${body.tipo}` });
