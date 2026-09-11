@@ -23,6 +23,15 @@
 .is-today .pika-button{color:var(--dorado)!important;font-weight:700!important;}
 .is-inrange .pika-button{background:rgba(47,111,237,0.2)!important;}
 .is-startrange .pika-button,.is-endrange .pika-button{background:var(--rojo)!important;color:white!important;}
+/* Promociones */
+.promo-row{display:flex;justify-content:space-between;gap:12px;align-items:center;background:var(--cafe2);border:1px solid var(--cafe3);border-radius:14px;padding:12px 14px;margin-bottom:8px;flex-wrap:wrap;}
+.promo-row.off{opacity:.5;}
+.promo-n{font-weight:800;font-size:15px;}
+.promo-d{font-size:13px;margin:3px 0;}
+.promo-acc{display:flex;gap:8px;align-items:center;flex-wrap:wrap;}
+.promo-prods{display:flex;flex-wrap:wrap;gap:6px 14px;margin:6px 0;}
+.promo-chk{font-size:13px;display:flex;gap:5px;align-items:center;cursor:pointer;}
+.promo-comp{border:1px dashed var(--cafe3);border-radius:12px;padding:10px 12px;margin-bottom:8px;}
 /* WhatsApp */
 .wa-alerta{position:fixed;left:50%;transform:translateX(-50%);top:76px;z-index:9000;background:#16a34a;color:#fff;border-radius:16px;padding:14px 20px;display:flex;gap:16px;align-items:center;font-size:15px;box-shadow:0 12px 36px rgba(0,0,0,.45);cursor:pointer;animation:waLatido 1.6s ease-in-out infinite;max-width:calc(100vw - 32px);}
 .wa-alerta[hidden]{display:none!important;}
@@ -442,6 +451,7 @@ header{background:linear-gradient(90deg,#192d5b 0%,#1e3a78 100%);border-bottom:1
     </div>
     <div class="ticket-tots" id="ticket-tots" style="display:none">
       <div class="tot-row"><span>Subtotal</span><span id="sub-txt">$0</span></div>
+      <div id="promo-ticket" style="display:none"></div>
       <div style="display:flex;align-items:center;gap:8px"><span style="font-size:13px;color:var(--gris)">Descuento $</span><input class="num-inp" type="number" id="desc-inp" value="0" min="0" oninput="recalc()"></div>
       <div id="puntos-canje-row" style="display:none;background:rgba(127,176,255,0.12);border:1px solid var(--dorado);border-radius:10px;padding:8px 10px;margin-top:2px">
         <div style="display:flex;justify-content:space-between;align-items:center">
@@ -591,10 +601,12 @@ header{background:linear-gradient(90deg,#192d5b 0%,#1e3a78 100%);border-bottom:1
     <button class="inv-tab active" id="tab-btn-prods" onclick="switchTab('prods',this)">🍽️ Productos</button>
     <button class="inv-tab" id="tab-btn-mods" onclick="switchTab('mods',this)">🎛️ Modificadores</button>
     <button class="inv-tab" id="tab-btn-cats" onclick="switchTab('cats',this)">🏷️ Categorías</button>
+    <button class="inv-tab" id="tab-btn-promos" onclick="switchTab('promos',this)">🎁 Promociones</button>
   </div>
   <div id="tab-prods" style="overflow-y:auto;flex:1"><div class="inv-grid" id="inv-grid"></div></div>
   <div id="tab-mods" style="display:none;overflow-y:auto;flex:1"><div id="mods-admin" style="padding:4px"></div></div>
   <div id="tab-cats" style="display:none;overflow-y:auto;flex:1"><div id="cats-admin" style="padding:4px"></div></div>
+  <div id="tab-promos" style="display:none;overflow-y:auto;flex:1"><div id="promo-admin" style="padding:4px"></div></div>
 </div>
 
 <!-- CLIENTES -->
@@ -1226,7 +1238,8 @@ function recalc() {
   var desc = parseFloat(document.getElementById('desc-inp').value)||0;
   var tipo = document.getElementById('sel-tipo').value;
   var envio = tipo==='delivery'?(parseFloat(document.getElementById('envio-inp').value)||0):0;
-  var total = sub-desc+envio;
+  promoActual = promoDelCarrito(); promoPintarTicket();
+  var total = sub-desc-promoActual.descuento+envio;
   document.getElementById('sub-txt').textContent='$'+sub.toFixed(2);
   document.getElementById('total-txt').textContent='$'+total.toFixed(2);
   var er = document.getElementById('envio-row');
@@ -1493,7 +1506,9 @@ function seleccionarCliente(id, nombre) {
 // COBRO
 function abrirCobro() {
   var sub=carrito.reduce(function(s,i){return s+i.precio*i.qty;},0);
-  var desc=parseFloat(document.getElementById('desc-inp').value)||0;
+  var descMan=parseFloat(document.getElementById('desc-inp').value)||0;
+  promoActual = promoDelCarrito();
+  var desc=descMan+promoActual.descuento;
   var tipo=document.getElementById('sel-tipo').value;
   var esDeliveryTipo = tipo==='delivery'||tipo==='uber_eats'||tipo==='rappi'||tipo==='didi_food'; var envio=tipo==='delivery'?(parseFloat(document.getElementById('envio-inp').value)||0):0;
   var total=sub-desc+envio;
@@ -1504,11 +1519,12 @@ function abrirCobro() {
     '<div>'+tl[tipo]+(msT!=='Sin mesa'?' · '+msT:'')+'</div>'+
     '<div>Cliente: '+clT+'</div>'+
     '<div>Items: '+carrito.reduce(function(s,i){return s+i.qty;},0)+'</div>'+
-    (desc>0?'<div>Descuento: -$'+desc.toFixed(2)+'</div>':'')+
+    promoActual.aplicadas.map(function(a){ return '<div style="color:#fbbf24">'+platEsc(promoTexto(a))+': -$'+a.descuento.toFixed(2)+'</div>'; }).join('')+
+    (descMan>0?'<div>Descuento: -$'+descMan.toFixed(2)+'</div>':'')+
     (envio>0?'<div>Envío: $'+envio.toFixed(2)+'</div>':'')+
     '<div style="font-weight:700;font-size:18px;margin-top:8px;color:var(--dorado)">TOTAL: $'+total.toFixed(2)+'</div>'+
     '<div>Pago: '+metodoPago+'</div>';
-  ultimaVenta={sub:sub,desc:desc,envio:envio,total:total,tipo:tipo,itemsSnap:carrito.map(function(i){return{emoji:i.emoji,nombre:i.nombre,qty:i.qty,precio:i.precio,nota:i.nota||''};})};
+  ultimaVenta={sub:sub,desc:desc,descMan:descMan,promos:promoActual.aplicadas,envio:envio,total:total,tipo:tipo,itemsSnap:carrito.map(function(i){return{emoji:i.emoji,nombre:i.nombre,qty:i.qty,precio:i.precio,nota:i.nota||''};})};
   document.getElementById('notas-cobro').value='';
   // Mostrar selector de canal solo si es delivery
   var campoCanal = document.getElementById('campo-canal-delivery');
@@ -1526,6 +1542,7 @@ function procesarVenta() {
     : v.tipo === 'delivery' ? (document.getElementById('sel-canal-delivery').value || 'delivery_propio')
     : 'local';
   if(pedidoWhatsApp){ notas = '📱 Pedido por WhatsApp' + (notas ? ' — ' + notas : ''); }
+  if(v.promos && v.promos.length){ notas = (notas ? notas + ' · ' : '') + v.promos.map(function(a){ return promoTexto(a) + ' -$' + a.descuento.toFixed(2); }).join(' · '); }
   cerrarModal('modal-cobro');
   sbFetch('ventas','POST',{subtotal:v.sub,descuento:v.desc,costo_envio:v.envio,total:v.total,metodo_pago:metodoPago,tipo_servicio:(plataformas.indexOf(v.tipo)>=0?'delivery':v.tipo),canal:canal,mesa_id:mesaId,cliente_id:cliId,notas:notas,estado:'pagada',direccion_entrega:v.tipo==='delivery'?(window._deliveryAddr||null):null,lat:v.tipo==='delivery'?(window._deliveryLat||null):null,lng:v.tipo==='delivery'?(window._deliveryLng||null):null}).then(function(r){
     var vid=r[0].id;
@@ -1544,7 +1561,8 @@ function procesarVenta() {
     }).then(function(){
       var tp=document.getElementById('ticket-print');
       var tl2={local:'En mesa',para_llevar:'Para llevar',delivery:'Delivery'};
-      var desc2=v.desc>0?'<div class="t-sub-row"><span>Descuento</span><span>-$'+v.desc.toFixed(2)+'</span></div>':'';
+      var desc2=(v.promos||[]).map(function(a){ return '<div class="t-sub-row"><span>'+platEsc(promoTexto(a))+'</span><span>-$'+a.descuento.toFixed(2)+'</span></div>'; }).join('')+
+        ((v.descMan!=null?v.descMan:v.desc)>0?'<div class="t-sub-row"><span>Descuento</span><span>-$'+(v.descMan!=null?v.descMan:v.desc).toFixed(2)+'</span></div>':'');
       var envio2=v.envio>0?'<div class="t-sub-row"><span>Envío</span><span>$'+v.envio.toFixed(2)+'</span></div>':'';
       var ms=document.getElementById('sel-mesa');var msT=ms.options[ms.selectedIndex].text;
       var clT=document.getElementById('cli-buscar').value||'Cliente general';
@@ -1972,6 +1990,8 @@ function switchTab(tab, btn) {
   document.getElementById('tab-prods').style.display = tab==='prods'?'block':'none';
   document.getElementById('tab-mods').style.display = tab==='mods'?'block':'none';
   document.getElementById('tab-cats').style.display = tab==='cats'?'block':'none';
+  document.getElementById('tab-promos').style.display = tab==='promos'?'block':'none';
+  if (tab==='promos') promoPintarAdmin();
   if (tab==='mods') renderModsAdmin();
   if (tab==='cats') renderCatsAdmin();
 }
@@ -4619,12 +4639,15 @@ function waTarjeta(p){
         (base.items || []).map(function(l){ return lineaHtml(l, true); }).join('') +
         '<div class="orp-cs" style="text-transform:uppercase;letter-spacing:.5px;color:#fbbf24;margin-top:6px">➕ Nuevo — preparar y agregar</div>' +
         (p.items || []).map(function(l){ return lineaHtml(l, false); }).join('') + '</div>' +
+        (p.promos || []).map(function(a){ return '<div class="wa-tot" style="color:#fbbf24"><span>' + waEsc(promoTexto(a)) + '</span><span>−' + waDinero(a.descuento) + '</span></div>'; }).join('') +
         '<div class="wa-tot"><span>Total del pedido completo</span><span>' + waDinero(base.total + Number(p.total)) + '</span></div>' +
         '<div class="wa-tot g"><span>Por cobrar ahora</span><span>' + waDinero(p.total) + '</span></div>' + notas +
         '<div class="wa-acc">' + acc + '</div></div>'
       : '') +
     (base ? '' : '<div class="wa-ped-items">' + items + '</div>' +
-    (p.envio ? '<div class="wa-tot"><span>Subtotal</span><span>' + waDinero(p.subtotal) + '</span></div><div class="wa-tot"><span>Envío</span><span>' + waDinero(p.envio) + '</span></div>' : '') +
+    ((p.envio || p.descuento) ? '<div class="wa-tot"><span>Subtotal</span><span>' + waDinero(p.subtotal) + '</span></div>' : '') +
+    (p.promos || []).map(function(a){ return '<div class="wa-tot" style="color:#fbbf24"><span>' + waEsc(promoTexto(a)) + '</span><span>−' + waDinero(a.descuento) + '</span></div>'; }).join('') +
+    (p.envio ? '<div class="wa-tot"><span>Envío</span><span>' + waDinero(p.envio) + '</span></div>' : '') +
     '<div class="wa-tot g"><span>Total</span><span>' + waDinero(p.total) + '</span></div>' + notas +
     '<div class="wa-acc">' + acc + '</div></div>');
 }
@@ -4659,7 +4682,8 @@ function waAceptar(id){
     var dom = ped.entrega === 'domicilio';
     var notas = '📱 WhatsApp #' + ped.id + (ped.pedido_padre ? ' (agregado al #' + ped.pedido_padre + ')' : '') + ' · ' + (ped.nombre || '') + ' · ' + waTel(ped.telefono) +
       (ped.paga_con ? ' · Paga con ' + waDinero(ped.paga_con) : '') + (ped.referencias ? ' · Ref: ' + ped.referencias : '') + (ped.notas ? ' · ' + ped.notas : '');
-    return sbFetch('ventas', 'POST', {subtotal: Number(ped.subtotal), descuento: 0, costo_envio: Number(ped.envio || 0), total: Number(ped.total),
+    if (ped.promos && ped.promos.length) notas += ' · ' + ped.promos.map(function(a){ return promoTexto(a) + ' -$' + Number(a.descuento).toFixed(2); }).join(' · ');
+    return sbFetch('ventas', 'POST', {subtotal: Number(ped.subtotal), descuento: Number(ped.descuento || 0), costo_envio: Number(ped.envio || 0), total: Number(ped.total),
       metodo_pago: ped.pago, tipo_servicio: dom ? 'delivery' : 'para_llevar', canal: dom ? 'delivery_propio' : 'local',
       notas: notas, estado: 'pagada', direccion_entrega: dom ? (ped.direccion || null) : null, lat: dom ? ped.lat : null, lng: dom ? ped.lng : null});
   }).then(function(v){
@@ -4803,6 +4827,211 @@ function waConsumo(){
 }
 
 setTimeout(waIniciar, 2500);
+
+// ================= PROMOCIONES (combos y descuentos automáticos) =================
+// Misma regla que usa el bot de WhatsApp:
+//  1) Primero se arman combos (cada combo = varios "lugares"; cada lugar acepta uno o varios productos).
+//  2) Lo que no quedó en combo recibe el mejor % de descuento que le aplique.
+//  Un producto nunca recibe dos promociones. Los extras con costo se cobran aparte.
+var promos = [];
+var promoActual = {descuento: 0, aplicadas: []};
+
+function promoCargar(){
+  return sbFetch('promociones?select=*&order=id').then(function(r){ promos = r || []; recalcSeguro(); if (document.getElementById('promo-admin')) promoPintarAdmin(); })
+    .catch(function(){ promos = []; });
+}
+function recalcSeguro(){ try { if (carrito.length) recalc(); } catch (e) {} }
+
+function promoVigente(p, canal){
+  if (!p.activo) return false;
+  if (canal === 'whatsapp' ? !p.whatsapp : !p.mostrador) return false;
+  var d = new Date();
+  if (p.dias && p.dias.length && p.dias.indexOf(d.getDay()) < 0) return false;
+  var hm = ('0' + d.getHours()).slice(-2) + ':' + ('0' + d.getMinutes()).slice(-2);
+  if (p.hora_ini && hm < p.hora_ini) return false;
+  if (p.hora_fin && hm > p.hora_fin) return false;
+  return true;
+}
+function promoPrecioBase(pid){ var p = productos.find(function(x){ return x.id === Number(pid); }); return p ? Number(p.precio) : 0; }
+
+// lineas: [{producto_id, cantidad, precio_unitario}]  → {descuento, aplicadas:[{nombre, tipo, veces, descuento}]}
+function promoCalcular(lineas, canal){
+  var unidades = [];
+  (lineas || []).forEach(function(l){
+    for (var i = 0; i < (l.cantidad || 1); i++) unidades.push({pid: Number(l.producto_id), base: promoPrecioBase(l.producto_id), unit: Number(l.precio_unitario), usada: false});
+  });
+  var activos = promos.filter(function(p){ return promoVigente(p, canal); });
+  var aplicadas = [];
+  // combos: el que más ahorra primero
+  activos.filter(function(p){ return p.tipo === 'combo' && p.componentes && p.componentes.length && p.precio != null; })
+    .sort(function(a, b){ return promoAhorroTeorico(b) - promoAhorroTeorico(a); })
+    .forEach(function(c){
+      var veces = 0, ahorro = 0;
+      while (true) {
+        var elegidas = [], ok = true;
+        c.componentes.forEach(function(comp){
+          if (!ok) return;
+          for (var k = 0; k < (comp.cantidad || 1); k++) {
+            var cand = unidades.filter(function(u){ return !u.usada && elegidas.indexOf(u) < 0 && (comp.producto_ids || []).indexOf(u.pid) >= 0; })
+              .sort(function(a, b){ return b.base - a.base; })[0];
+            if (!cand) { ok = false; return; }
+            elegidas.push(cand);
+          }
+        });
+        if (!ok) break;
+        var suma = elegidas.reduce(function(s, u){ return s + u.base; }, 0);
+        if (suma - Number(c.precio) <= 0) break;
+        elegidas.forEach(function(u){ u.usada = true; });
+        veces++; ahorro += suma - Number(c.precio);
+      }
+      if (veces) aplicadas.push({id: c.id, nombre: c.nombre, tipo: 'combo', veces: veces, descuento: Math.round(ahorro * 100) / 100});
+    });
+  // descuentos por porcentaje en lo que no quedó en combo
+  var porPromo = {};
+  unidades.filter(function(u){ return !u.usada; }).forEach(function(u){
+    var mejor = null;
+    activos.forEach(function(p){
+      if (p.tipo !== 'descuento' || !p.porcentaje || (p.producto_ids || []).indexOf(u.pid) < 0) return;
+      if (!mejor || Number(p.porcentaje) > Number(mejor.porcentaje)) mejor = p;
+    });
+    if (!mejor) return;
+    var d = u.unit * Number(mejor.porcentaje) / 100;
+    if (!porPromo[mejor.id]) porPromo[mejor.id] = {id: mejor.id, nombre: mejor.nombre, tipo: 'descuento', veces: 0, descuento: 0};
+    porPromo[mejor.id].veces++; porPromo[mejor.id].descuento += d;
+  });
+  Object.keys(porPromo).forEach(function(k){ porPromo[k].descuento = Math.round(porPromo[k].descuento * 100) / 100; aplicadas.push(porPromo[k]); });
+  return {descuento: Math.round(aplicadas.reduce(function(s, a){ return s + a.descuento; }, 0) * 100) / 100, aplicadas: aplicadas};
+}
+function promoAhorroTeorico(c){
+  var suma = (c.componentes || []).reduce(function(s, comp){
+    var precios = (comp.producto_ids || []).map(promoPrecioBase);
+    return s + (precios.length ? Math.max.apply(null, precios) : 0) * (comp.cantidad || 1);
+  }, 0);
+  return suma - Number(c.precio || 0);
+}
+function promoTexto(a){ return (a.tipo === 'combo' ? '🎁 ' : '🏷️ ') + a.nombre + (a.veces > 1 ? ' ×' + a.veces : ''); }
+
+// ---------- en la pantalla de Venta ----------
+function promoDelCarrito(){
+  if (!promos.length || !carrito.length) return {descuento: 0, aplicadas: []};
+  return promoCalcular(carrito.map(function(i){ return {producto_id: i.id, cantidad: i.qty, precio_unitario: i.precio}; }), 'mostrador');
+}
+function promoPintarTicket(){
+  var cont = document.getElementById('promo-ticket');
+  if (!cont) return;
+  cont.innerHTML = promoActual.aplicadas.map(function(a){
+    return '<div class="tot-row" style="color:#fbbf24"><span>' + platEsc(promoTexto(a)) + '</span><span>−$' + a.descuento.toFixed(2) + '</span></div>';
+  }).join('');
+  cont.style.display = promoActual.aplicadas.length ? 'block' : 'none';
+}
+
+// ---------- administración (Inventario › Promociones) ----------
+var promoEdit = null;
+function promoPintarAdmin(){
+  var el = document.getElementById('promo-admin'); if (!el) return;
+  var nom = function(pid){ var p = productos.find(function(x){ return x.id === pid; }); return p ? p.nombre : '#' + pid; };
+  var diasN = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+  var lista = promos.map(function(p){
+    var det = p.tipo === 'combo'
+      ? (p.componentes || []).map(function(c){ return (c.cantidad > 1 ? c.cantidad + '× ' : '') + (c.producto_ids || []).map(nom).join(' / '); }).join(' + ') +
+        ' → <b>$' + Number(p.precio).toFixed(0) + '</b> <span class="orp-cs" style="display:inline">(normal $' + (promoAhorroTeorico(p) + Number(p.precio)).toFixed(0) + ')</span>'
+      : '<b>' + Number(p.porcentaje) + '% </b> en ' + (p.producto_ids || []).map(nom).join(', ');
+    var cuando = [(p.dias && p.dias.length ? p.dias.map(function(d){ return diasN[d]; }).join(', ') : 'Todos los días'),
+      (p.hora_ini || p.hora_fin ? (p.hora_ini || '00:00') + '–' + (p.hora_fin || '23:59') : ''),
+      [p.mostrador ? 'Mostrador' : '', p.whatsapp ? 'WhatsApp' : ''].filter(Boolean).join(' + ')].filter(Boolean).join(' · ');
+    return '<div class="promo-row' + (p.activo ? '' : ' off') + '"><div><div class="promo-n">' + (p.tipo === 'combo' ? '🎁 ' : '🏷️ ') + platEsc(p.nombre) + '</div>' +
+      '<div class="promo-d">' + det + '</div><div class="orp-cs">' + cuando + '</div></div>' +
+      '<div class="promo-acc"><label class="wa-check"><input type="checkbox"' + (p.activo ? ' checked' : '') + ' onchange="promoActivar(' + p.id + ',this.checked)"> Activa</label>' +
+      '<button class="orp-btn" onclick="promoAbrir(' + p.id + ')">Editar</button><button class="orp-btn wa-btn-no" onclick="promoBorrar(' + p.id + ')">Borrar</button></div></div>';
+  }).join('') || '<div class="wa-vacio">Todavía no hay promociones. Crea un combo o un descuento.</div>';
+  el.innerHTML = '<div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">' +
+    '<button class="orp-btn lleno" onclick="promoAbrir(null,\'combo\')">🎁 Nuevo combo</button>' +
+    '<button class="orp-btn lleno" onclick="promoAbrir(null,\'descuento\')">🏷️ Nuevo descuento %</button></div>' +
+    '<div class="orp-box-n">Se aplican solas en Venta y en el bot de WhatsApp. Un producto no recibe dos promociones; los extras con costo se cobran aparte.</div>' +
+    lista + '<div id="promo-form"></div>';
+}
+function promoOpcionesProductos(sel){
+  return productos.filter(function(p){ return !/combo/i.test(p.nombre); }).map(function(p){
+    return '<label class="promo-chk"><input type="checkbox" value="' + p.id + '"' + (sel.indexOf(p.id) >= 0 ? ' checked' : '') + '> ' + platEsc(p.nombre) + ' <span class="orp-cs" style="display:inline">$' + Number(p.precio).toFixed(0) + '</span></label>';
+  }).join('');
+}
+function promoAbrir(id, tipo){
+  var p = id ? promos.find(function(x){ return x.id === id; }) : {tipo: tipo, nombre: '', activo: true, mostrador: true, whatsapp: true, componentes: [{producto_ids: [], cantidad: 1}, {producto_ids: [], cantidad: 1}], producto_ids: [], porcentaje: 10, dias: []};
+  promoEdit = JSON.parse(JSON.stringify(p));
+  var diasN = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
+  var f = '<div class="orp-box" style="margin-top:14px"><div class="orp-box-t">' + (id ? 'Editar ' : 'Nuevo ') + (p.tipo === 'combo' ? 'combo' : 'descuento') + '</div>' +
+    '<div class="wa-form" style="margin-top:10px"><label>Nombre (lo ve el cliente)<input id="pf-nombre" class="orp-inp" value="' + platEsc(p.nombre) + '" placeholder="' + (p.tipo === 'combo' ? 'Ej. Combo Chilas + Coca' : 'Ej. 10% en gorditas') + '"></label>';
+  if (p.tipo === 'combo') {
+    f += '<label>Precio del combo $<input id="pf-precio" class="orp-inp" type="number" min="0" value="' + (p.precio != null ? p.precio : '') + '" oninput="promoPreview()"></label></div>' +
+      '<div class="orp-box-n" style="margin-top:12px">Qué lleva el combo. En cada parte marca los productos que sirven (ej. cualquier refresco).</div><div id="pf-comps">' +
+      (p.componentes || []).map(function(c, i){ return promoCompHtml(c, i); }).join('') + '</div>' +
+      '<button class="orp-btn" onclick="promoAgregarComp()">+ Agregar otra parte</button><div id="pf-preview" class="orp-cs" style="margin-top:8px"></div>';
+  } else {
+    f += '<label>Descuento %<input id="pf-pct" class="orp-inp" type="number" min="1" max="100" value="' + (p.porcentaje || '') + '"></label></div>' +
+      '<div class="orp-box-n" style="margin-top:12px">Productos con descuento:</div><div class="promo-prods" id="pf-prods">' + promoOpcionesProductos(p.producto_ids || []) + '</div>';
+  }
+  f += '<div class="orp-box-n" style="margin-top:12px">Cuándo aplica (déjalo vacío para siempre):</div><div class="promo-prods" id="pf-dias">' +
+    diasN.map(function(d, i){ return '<label class="promo-chk"><input type="checkbox" value="' + i + '"' + ((p.dias || []).indexOf(i) >= 0 ? ' checked' : '') + '> ' + d + '</label>'; }).join('') + '</div>' +
+    '<div class="wa-form" style="margin-top:8px"><label>Desde (hora)<input id="pf-hi" class="orp-inp" type="time" value="' + (p.hora_ini || '') + '"></label>' +
+    '<label>Hasta (hora)<input id="pf-hf" class="orp-inp" type="time" value="' + (p.hora_fin || '') + '"></label></div>' +
+    '<div style="display:flex;gap:16px;margin-top:10px;flex-wrap:wrap"><label class="wa-check"><input type="checkbox" id="pf-most"' + (p.mostrador ? ' checked' : '') + '> En mostrador</label>' +
+    '<label class="wa-check"><input type="checkbox" id="pf-wa"' + (p.whatsapp ? ' checked' : '') + '> En WhatsApp</label></div>' +
+    '<div style="display:flex;gap:8px;margin-top:14px"><button class="orp-btn lleno" onclick="promoGuardar()">Guardar</button>' +
+    '<button class="orp-btn" onclick="document.getElementById(\'promo-form\').innerHTML=\'\'">Cancelar</button></div></div>';
+  document.getElementById('promo-form').innerHTML = f;
+  document.getElementById('promo-form').scrollIntoView({behavior: 'smooth'});
+  promoPreview();
+}
+function promoCompHtml(c, i){
+  return '<div class="promo-comp" data-i="' + i + '"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px">' +
+    '<b>Parte ' + (i + 1) + '</b><span>Cantidad <input class="orp-inp pf-cant" type="number" min="1" value="' + (c.cantidad || 1) + '" style="width:60px" oninput="promoPreview()"></span></div>' +
+    '<div class="promo-prods" onchange="promoPreview()">' + promoOpcionesProductos(c.producto_ids || []) + '</div></div>';
+}
+function promoLeerComps(){
+  return [].map.call(document.querySelectorAll('#pf-comps .promo-comp'), function(el){
+    return {cantidad: Math.max(1, parseInt(el.querySelector('.pf-cant').value) || 1),
+      producto_ids: [].map.call(el.querySelectorAll('input[type=checkbox]:checked'), function(x){ return Number(x.value); })};
+  }).filter(function(c){ return c.producto_ids.length; });
+}
+function promoAgregarComp(){
+  var cont = document.getElementById('pf-comps');
+  cont.insertAdjacentHTML('beforeend', promoCompHtml({producto_ids: [], cantidad: 1}, cont.children.length));
+}
+function promoPreview(){
+  var el = document.getElementById('pf-preview'); if (!el) return;
+  var comps = promoLeerComps(), precio = parseFloat(document.getElementById('pf-precio').value);
+  if (!comps.length) { el.textContent = ''; return; }
+  var normal = promoAhorroTeorico({componentes: comps, precio: 0});
+  el.innerHTML = 'Precio normal: <b>$' + normal.toFixed(0) + '</b>' + (precio >= 0 && !isNaN(precio) ? ' · combo $' + precio.toFixed(0) + ' · el cliente ahorra <b style="color:#4ade80">$' + (normal - precio).toFixed(0) + '</b>' : '');
+}
+function promoGuardar(){
+  var p = promoEdit, v = function(id){ var e = document.getElementById(id); return e ? e.value.trim() : ''; };
+  var fila = {nombre: v('pf-nombre'), tipo: p.tipo, activo: p.activo !== false,
+    dias: [].map.call(document.querySelectorAll('#pf-dias input:checked'), function(x){ return Number(x.value); }),
+    hora_ini: v('pf-hi') || null, hora_fin: v('pf-hf') || null,
+    mostrador: document.getElementById('pf-most').checked, whatsapp: document.getElementById('pf-wa').checked};
+  if (!fila.nombre) { toast('Ponle nombre a la promoción', true); return; }
+  if (p.tipo === 'combo') {
+    fila.componentes = promoLeerComps(); fila.precio = parseFloat(v('pf-precio'));
+    if (fila.componentes.length < 1 || isNaN(fila.precio)) { toast('Marca qué lleva el combo y su precio', true); return; }
+    fila.producto_ids = null; fila.porcentaje = null;
+  } else {
+    fila.producto_ids = [].map.call(document.querySelectorAll('#pf-prods input:checked'), function(x){ return Number(x.value); });
+    fila.porcentaje = parseFloat(v('pf-pct'));
+    if (!fila.producto_ids.length || !(fila.porcentaje > 0 && fila.porcentaje <= 100)) { toast('Marca productos y un % entre 1 y 100', true); return; }
+    fila.componentes = null; fila.precio = null;
+  }
+  (p.id ? sbFetch('promociones?id=eq.' + p.id, 'PATCH', fila) : sbFetch('promociones', 'POST', fila))
+    .then(function(){ toast('Promoción guardada'); document.getElementById('promo-form').innerHTML = ''; return promoCargar(); })
+    .catch(function(e){ toast('No se guardó: ' + e.message, true); });
+}
+function promoActivar(id, on){ sbFetch('promociones?id=eq.' + id, 'PATCH', {activo: on}).then(promoCargar).catch(function(e){ toast(e.message, true); }); }
+function promoBorrar(id){
+  if (!confirm('¿Borrar esta promoción?')) return;
+  sbFetch('promociones?id=eq.' + id, 'DELETE').then(promoCargar).catch(function(e){ toast(e.message, true); });
+}
+setTimeout(promoCargar, 1800);
+setInterval(promoCargar, 5 * 60 * 1000);
 </script>
 </body>
 </html>
