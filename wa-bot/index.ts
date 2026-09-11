@@ -653,7 +653,7 @@ async function herramienta(nombre: string, input: any, ctx: { tel: string; nombr
   }
   if (nombre === "avisar_agotado") {
     await registrarAgotado(String(input.nombre ?? "").trim(), ctx.simulado);
-    return { ok: true, nota: "Listo, el equipo ya tiene el aviso. Sigue atendiendo al cliente con otra opción." };
+    return { ok: true, nota: `Listo, el equipo ya tiene el aviso. Ahora escríbele al cliente en un solo mensaje: que por ahora se nos terminó ${input.nombre ?? "eso"} (con amabilidad), y ofrécele 2 o 3 opciones concretas del MENÚ para seguir con su pedido.` };
   }
   if (nombre === "pasar_a_humano") {
     await crearAviso(ctx.tel, ctx.nombre, { quien: "cliente", tema: "Pide atención de una persona: " + (input.motivo ?? "") }, ctx.contexto);
