@@ -35,6 +35,15 @@
 /* WhatsApp */
 .wa-alerta{position:fixed;left:50%;transform:translateX(-50%);top:76px;z-index:9000;background:#16a34a;color:#fff;border-radius:16px;padding:14px 20px;display:flex;gap:16px;align-items:center;font-size:15px;box-shadow:0 12px 36px rgba(0,0,0,.45);cursor:pointer;animation:waLatido 1.6s ease-in-out infinite;max-width:calc(100vw - 32px);}
 .wa-alerta[hidden]{display:none!important;}
+.rep-alerta{top:auto;bottom:24px;background:#1d4ed8;animation:none;}
+.rep-alerta.malo{background:#dc2626;animation:waLatido 1.6s ease-in-out infinite;}
+.rep-alerta span{color:#1d4ed8;}
+.rep-alerta.malo span{color:#b91c1c;}
+.rep-row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:8px;}
+.rep-fila{display:grid;grid-template-columns:28px minmax(120px,1fr) minmax(140px,1fr) auto auto auto auto;gap:8px;align-items:center;margin-bottom:8px;}
+.rep-fila.nuevo{grid-template-columns:28px minmax(120px,1fr) minmax(140px,1fr) auto;}
+.rep-fila.off{opacity:.55;}
+@media(max-width:720px){.rep-fila,.rep-fila.nuevo{grid-template-columns:1fr 1fr;}.rep-fila .num{display:none;}}
 .wa-alerta span{background:#fff;color:#15803d;border-radius:10px;padding:6px 12px;font-weight:800;font-size:13px;white-space:nowrap;}
 @keyframes waLatido{0%,100%{box-shadow:0 12px 36px rgba(0,0,0,.45),0 0 0 0 rgba(34,197,94,.7);}50%{box-shadow:0 12px 36px rgba(0,0,0,.45),0 0 0 12px rgba(34,197,94,0);}}
 .wa-badge{background:#22b573;color:#fff;border-radius:999px;font-size:11px;font-weight:800;padding:1px 7px;margin-left:2px;line-height:16px;}
@@ -3053,6 +3062,7 @@ cargarDatos();
 
 <!-- VISTA CORTE DE CAJA (ORP) -->
 <div id="wa-alerta" class="wa-alerta" hidden onclick="waIrAlerta()"></div>
+<div id="rep-alerta" class="wa-alerta rep-alerta" hidden onclick="repIrAlerta()"></div>
 <div class="vista" id="vista-whatsapp">
   <div class="orp-page">
     <div class="orp-top">
@@ -3137,6 +3147,19 @@ cargarDatos();
         <div style="display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap">
           <button class="orp-btn lleno" onclick="waGuardarAjustes()">Guardar</button>
           <span class="orp-cs" id="wa-consumo"></span>
+        </div>
+      </div>
+      <div class="orp-box">
+        <div class="orp-box-h"><div class="orp-box-t">🛵 Repartidores</div></div>
+        <div class="orp-box-n">Al aceptar un pedido a domicilio, el bot se lo ofrece por WhatsApp al primero de la lista. Si dice que no o no contesta a tiempo, pasa al siguiente. Cuando uno acepta, le llegan los datos del cliente y aquí suena el aviso con su nombre.</div>
+        <div id="rep-admin" style="margin-top:12px"></div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:6px">
+          <label class="orp-cs" style="display:flex;gap:8px;align-items:center">Minutos para contestar <input id="rep-min" class="orp-inp" type="number" min="1" max="30" style="width:70px"></label>
+          <button class="orp-btn" onclick="repGuardarMin()">Guardar minutos</button>
+        </div>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:12px">
+          <button class="orp-btn" onclick="repPlantilla(false)">Ver estado del aviso en Meta</button>
+          <span class="orp-cs" id="rep-plantilla"></span>
         </div>
       </div>
     </div>
@@ -4545,6 +4568,7 @@ function waCargarCfg(llenar){
       document.getElementById('wa-cfg-notas').value = t('bot_notas');
       document.getElementById('wa-cfg-modelo').value = t('bot_modelo') || 'claude-sonnet-5';
       waConsumo();
+      repCargar().then(repPintarAjustes); repPlantilla(false);
     }
   }).catch(function(e){ toast('No pude leer los ajustes del bot: ' + e.message, true); });
 }
@@ -4634,7 +4658,7 @@ function waTarjeta(p){
     '<div class="wa-ped-c">' + waTel(p.telefono) + ' · ' + waCuando(p.creado) + (p.venta_id ? ' · venta #' + p.venta_id : '') + '</div></div>' +
     '<div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end">' + pill(es[0], es[1]) + (amp ? pill('Solo lo nuevo', '#f59e0b') : '') + (p.simulado ? pill('Prueba', '#8fa3c8') : '') + '</div></div>' +
     '<div class="orp-chips">' + pill(dom ? '🛵 A domicilio' : '🥡 Pasa a recoger', dom ? '#7fb0ff' : '#c4b5fd') + pago + '</div>' +
-    dir + (base
+    dir + repTarjeta(p) + (base
       ? '<div class="wa-ped-items"><div class="orp-cs" style="text-transform:uppercase;letter-spacing:.5px">Ya estaba en el pedido #' + p.pedido_padre + ' (ya cobrado)</div>' +
         (base.items || []).map(function(l){ return lineaHtml(l, true); }).join('') +
         '<div class="orp-cs" style="text-transform:uppercase;letter-spacing:.5px;color:#fbbf24;margin-top:6px">➕ Nuevo — preparar y agregar</div>' +
@@ -4704,7 +4728,10 @@ function waAceptar(id){
     return waSb('wa_pedidos?id=eq.' + id, 'PATCH', {estado: 'aceptado', venta_id: ped.venta_id, actualizado: new Date().toISOString()});
   }).then(function(){
     toast(ped.simulado ? 'Pedido de prueba #' + id + ' aceptado (no se cobró ni cuenta en la venta)' : 'Pedido #' + id + ' aceptado · venta #' + ped.venta_id);
-    return waFn({accion: 'aviso', pedido_id: id, tipo: 'aceptado'}).catch(function(){});
+    var aviso = waFn({accion: 'aviso', pedido_id: id, tipo: 'aceptado'}).catch(function(){});
+    // a domicilio: el bot le ofrece el pedido a los repartidores (los de prueba no, para no molestarlos)
+    if (ped.entrega === 'domicilio' && !ped.simulado) aviso = aviso.then(function(){ return waFn({accion: 'reparto_iniciar', pedido_id: id}); }).catch(function(){});
+    return aviso;
   }).catch(function(e){
     toast(String(e.message || e).slice(0, 140), true);
     if (ped && !ped.venta_id && !ped.simulado) sbFetch('wa_pedidos?id=eq.' + id + '&estado=eq.aceptando', 'PATCH', {estado: 'nuevo'}).catch(function(){});
@@ -5032,6 +5059,151 @@ function promoBorrar(id){
 }
 setTimeout(promoCargar, 1800);
 setInterval(promoCargar, 5 * 60 * 1000);
+
+// ================= REPARTO A DOMICILIO =================
+// Al aceptar un pedido a domicilio, el bot se lo ofrece por WhatsApp a los repartidores en orden.
+// Aquí: lista de repartidores, estado del reparto en cada pedido y la alerta cuando alguien acepta o nadie acepta.
+var repLista = [];
+function repCargar(){
+  return sbFetch('repartidores?select=*&order=orden,id').then(function(r){ repLista = r || []; return repLista; }).catch(function(){ return repLista; });
+}
+function repTiempo(iso){
+  if (!iso) return '';
+  var s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
+  return s < 60 ? s + ' s' : Math.floor(s / 60) + ' min ' + ('0' + (s % 60)).slice(-2) + ' s';
+}
+// Renglón de reparto dentro de la tarjeta del pedido
+function repTarjeta(p){
+  if (p.entrega !== 'domicilio' || p.pedido_padre || p.simulado) return '';
+  if (['aceptado', 'aceptando', 'listo'].indexOf(p.estado) < 0) return '';
+  var pill = function(txt, c){ return '<span class="orp-pill" style="background:' + c + '22;color:' + c + ';border:1px solid ' + c + '66">' + txt + '</span>'; };
+  var ints = p.reparto_intentos || [];
+  var hist = ints.filter(function(i){ return i.estado !== 'esperando'; }).map(function(i){
+    var ic = i.estado === 'aceptó' || i.estado === 'asignado a mano' ? '✅' : i.estado === 'no puede' ? '✋' : i.estado === 'no contestó' ? '⏱️' : '⚠️';
+    return ic + ' ' + waEsc(i.nombre) + ': ' + waEsc(i.estado);
+  }).join(' · ');
+  var manual = function(){
+    if (!repLista.length) return '';
+    return '<select class="orp-inp" style="width:auto" onchange="if(this.value)repManual(' + p.id + ',this.value)"><option value="">Asignar a mano…</option>' +
+      repLista.map(function(r){ return '<option value="' + r.id + '">' + waEsc(r.nombre) + '</option>'; }).join('') + '</select>';
+  };
+  var h = '';
+  if (p.reparto_estado === 'asignado') h = pill('🛵 Lo lleva ' + waEsc(p.repartidor_nombre || ''), '#22b573');
+  else if (p.reparto_estado === 'buscando') {
+    var act = ints.slice().reverse().find(function(i){ return i.estado === 'esperando'; });
+    h = pill('🔎 Buscando repartidor' + (act ? ' · esperando a ' + waEsc(act.nombre) + ' (' + repTiempo(act.enviado) + ')' : ''), '#f59e0b');
+  } else if (p.reparto_estado === 'sin_repartidor') {
+    h = pill(ints.length ? '⚠️ Ningún repartidor aceptó' : '⚠️ No hay repartidores dados de alta', '#ef5350') +
+      '<button class="orp-btn" onclick="repBuscar(' + p.id + ',true)">Volver a buscar</button>' + manual();
+  } else if (p.estado !== 'listo') {
+    h = '<button class="orp-btn" onclick="repBuscar(' + p.id + ',false)">🛵 Buscar repartidor</button>' + manual();
+  }
+  if (!h && !hist) return '';
+  return '<div class="rep-row">' + h + (hist ? '<div class="orp-cs" style="width:100%">' + hist + '</div>' : '') + '</div>';
+}
+function repBuscar(id, reiniciar){
+  waFn({accion: 'reparto_iniciar', pedido_id: id, reiniciar: !!reiniciar}).then(function(r){
+    if (r && r.ok === false) toast(r.error || 'No se pudo', true);
+    else if (r && r.sin_repartidores) toast('No hay repartidores activos. Dalos de alta en WhatsApp › Ajustes', true);
+    else toast('Buscando repartidor para el pedido #' + id);
+  }).catch(function(e){ toast(e.message, true); }).then(function(){ waCargarPedidos(); });
+}
+function repManual(id, repId){
+  var r = repLista.find(function(x){ return x.id === Number(repId); });
+  if (!confirm('¿Asignar el pedido #' + id + ' a ' + (r ? r.nombre : '') + '?')) { waCargarPedidos(); return; }
+  waFn({accion: 'reparto_manual', pedido_id: id, repartidor_id: Number(repId)}).then(function(x){
+    toast(x && x.ok ? 'Pedido #' + id + ' asignado a ' + (r ? r.nombre : '') + (x.mensaje ? ' (le mandamos los datos)' : ' (avísale tú: no le llegó el WhatsApp)') : (x && x.error) || 'No se pudo', !(x && x.ok));
+  }).catch(function(e){ toast(e.message, true); }).then(function(){ waCargarPedidos(); });
+}
+
+// Alerta: «Juan va por el pedido #12» o «Nadie aceptó el #12». Suena y se queda hasta que le dan Enterado.
+var repYaSono = {};
+function repRevisar(){
+  sbFetch('wa_pedidos?reparto_avisado=eq.false&reparto_estado=in.(asignado,sin_repartidor)&select=id,reparto_estado,repartidor_nombre,reparto_intentos&order=id').then(function(r){
+    var el = document.getElementById('rep-alerta');
+    if (!r.length) { el.hidden = true; return; }
+    var nuevo = r.some(function(p){ return !repYaSono[p.id + p.reparto_estado]; });
+    r.forEach(function(p){ repYaSono[p.id + p.reparto_estado] = 1; });
+    if (nuevo) waSonar();
+    var malo = r.some(function(p){ return p.reparto_estado === 'sin_repartidor'; });
+    el.className = 'wa-alerta rep-alerta' + (malo ? ' malo' : '');
+    el.innerHTML = '<div>' + r.map(function(p){
+      return p.reparto_estado === 'asignado' ? '🛵 <b>' + waEsc(p.repartidor_nombre || 'Un repartidor') + '</b> va por el pedido <b>#' + p.id + '</b>'
+        : '⚠️ <b>Nadie aceptó el pedido #' + p.id + '</b>' + ((p.reparto_intentos || []).length ? '' : ' (no hay repartidores dados de alta)') + ': asígnalo a mano';
+    }).join('<br>') + '</div><span onclick="event.stopPropagation();repEnterado([' + r.map(function(p){ return p.id; }).join(',') + '])">Enterado</span>';
+    el.hidden = false;
+  }).catch(function(){});
+  // si hay pedidos esperando respuesta, que el bot revise los tiempos (pasa al siguiente a los X minutos)
+  sbFetch('wa_pedidos?reparto_estado=eq.buscando&select=id&limit=1').then(function(r){
+    if (r.length) waFn({accion: 'reparto_revisar'}).catch(function(){});
+  }).catch(function(){});
+}
+function repEnterado(ids){
+  sbFetch('wa_pedidos?id=in.(' + ids.join(',') + ')', 'PATCH', {reparto_avisado: true}).then(function(){
+    document.getElementById('rep-alerta').hidden = true; waCargarPedidos();
+  }).catch(function(e){ toast(e.message, true); });
+}
+function repIrAlerta(){
+  waFil = 'aceptado';
+  irVista('whatsapp', document.querySelector('.nav-tab[data-vista=whatsapp]'));
+  waSeccion('pedidos'); waFiltro('aceptado');
+}
+
+// ---------- Ajustes › Repartidores ----------
+function repPintarAjustes(){
+  var el = document.getElementById('rep-admin'); if (!el) return;
+  el.innerHTML = (repLista.length ? repLista.map(function(r, i){
+    return '<div class="rep-fila' + (r.activo ? '' : ' off') + '"><b class="num">' + (i + 1) + '</b>' +
+      '<input class="orp-inp" value="' + waEsc(r.nombre) + '" onchange="repCambiar(' + r.id + ',{nombre:this.value.trim()})">' +
+      '<input class="orp-inp" value="' + waEsc(r.telefono) + '" onchange="repCambiar(' + r.id + ',{telefono:this.value.trim()})">' +
+      '<label class="wa-check"><input type="checkbox"' + (r.activo ? ' checked' : '') + ' onchange="repCambiar(' + r.id + ',{activo:this.checked})"> Activo</label>' +
+      '<button class="orp-btn" title="Subir" onclick="repMover(' + i + ',-1)"' + (i ? '' : ' disabled') + '>▲</button>' +
+      '<button class="orp-btn" title="Bajar" onclick="repMover(' + i + ',1)"' + (i < repLista.length - 1 ? '' : ' disabled') + '>▼</button>' +
+      '<button class="orp-btn wa-btn-no" onclick="repBorrar(' + r.id + ')">Quitar</button></div>';
+  }).join('') : '<div class="wa-vacio">Todavía no hay repartidores. Agrega el primero abajo.</div>') +
+    '<div class="rep-fila nuevo"><b class="num">+</b><input id="rep-n" class="orp-inp" placeholder="Nombre (ej. Juan)"><input id="rep-t" class="orp-inp" placeholder="WhatsApp (ej. 844 123 4567)">' +
+    '<button class="orp-btn lleno" onclick="repAgregar()">Agregar</button></div>';
+  var m = document.getElementById('rep-min'); if (m) m.value = Number((waCfg.bot_reparto_minutos || {}).valor) || 4;
+}
+function repAgregar(){
+  var n = document.getElementById('rep-n').value.trim(), t = document.getElementById('rep-t').value.trim();
+  if (!n || t.replace(/\D/g, '').length < 10) { toast('Pon nombre y un WhatsApp de 10 dígitos', true); return; }
+  var orden = repLista.reduce(function(m, r){ return Math.max(m, r.orden || 0); }, 0) + 1;
+  sbFetch('repartidores', 'POST', {nombre: n, telefono: t, activo: true, orden: orden}).then(function(){ toast(n + ' agregado'); return repCargar(); })
+    .then(repPintarAjustes).catch(function(e){ toast('No se guardó: ' + e.message, true); });
+}
+function repCambiar(id, cambio){
+  if (cambio.telefono !== undefined && cambio.telefono.replace(/\D/g, '').length < 10) { toast('El WhatsApp debe tener 10 dígitos', true); return; }
+  sbFetch('repartidores?id=eq.' + id, 'PATCH', cambio).then(repCargar).then(repPintarAjustes).catch(function(e){ toast(e.message, true); });
+}
+function repMover(i, d){
+  var a = repLista[i], b = repLista[i + d]; if (!a || !b) return;
+  Promise.all([sbFetch('repartidores?id=eq.' + a.id, 'PATCH', {orden: i + d + 1}), sbFetch('repartidores?id=eq.' + b.id, 'PATCH', {orden: i + 1})].concat(
+    repLista.map(function(r, k){ return k === i || k === i + d ? null : sbFetch('repartidores?id=eq.' + r.id, 'PATCH', {orden: k + 1}); }).filter(Boolean)))
+    .then(repCargar).then(repPintarAjustes).catch(function(e){ toast(e.message, true); });
+}
+function repBorrar(id){
+  var r = repLista.find(function(x){ return x.id === id; });
+  if (!confirm('¿Quitar a ' + (r ? r.nombre : '') + ' de la lista? (Si solo va a faltar hoy, mejor quítale la palomita de «Activo»)')) return;
+  sbFetch('repartidores?id=eq.' + id, 'DELETE').then(repCargar).then(repPintarAjustes).catch(function(e){ toast(e.message, true); });
+}
+function repGuardarMin(){
+  var v = Math.min(30, Math.max(1, parseInt(document.getElementById('rep-min').value) || 4));
+  sbFetch('config_orp?clave=eq.bot_reparto_minutos', 'PATCH', {valor: v}).then(function(){ toast('Cada repartidor tiene ' + v + ' min para contestar'); waCargarCfg(); })
+    .catch(function(e){ toast(e.message, true); });
+}
+function repPlantilla(crear){
+  var el = document.getElementById('rep-plantilla');
+  el.textContent = crear ? 'Enviando a Meta…' : 'Revisando…';
+  waFn({accion: 'reparto_plantilla', crear: !!crear}).then(function(r){
+    if (crear) { el.textContent = r.status < 300 ? 'Enviado a revisión de Meta. Revisa el estado en unos minutos.' : 'Meta respondió: ' + (r.respuesta || '').slice(0, 200); return; }
+    var p = (r.plantilla || [])[0];
+    var tx = {APPROVED: '✅ Aprobado: los avisos a repartidores ya salen aunque no te hayan escrito', PENDING: '⏳ En revisión de Meta', REJECTED: '❌ Meta lo rechazó'};
+    el.textContent = p ? (tx[p.estado] || p.estado) + (p.motivo && p.motivo !== 'NONE' ? ' · ' + p.motivo : '') : 'Aún no se ha pedido la aprobación del aviso.';
+  }).catch(function(e){ el.textContent = e.message; });
+}
+setTimeout(function(){ repCargar(); repRevisar(); setInterval(repRevisar, 10000); }, 3000);
+
 </script>
 </body>
 </html>
