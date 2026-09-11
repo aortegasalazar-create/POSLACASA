@@ -4625,13 +4625,23 @@ function waRevisar(){
 // Avisos del bot: un repartidor (o cliente) escribió algo que el equipo tiene que resolver. Suena y se queda hasta «Enterado».
 var avYaSono = {};
 function avRevisar(){
-  sbFetch('wa_chats?contexto->aviso->>estado=eq.pendiente&telefono=neq.SIMULADOR&select=telefono,nombre,contexto&order=ultimo_mensaje.desc&limit=20').then(function(r){
+  Promise.all([
+    sbFetch('wa_chats?contexto->aviso->>estado=eq.pendiente&telefono=neq.SIMULADOR&select=telefono,nombre,contexto&order=ultimo_mensaje.desc&limit=20'),
+    sbFetch('config_orp?clave=eq.bot_agotados&select=texto').catch(function(){ return []; })
+  ]).then(function(res){
+    var r = res[0] || [], ag = [];
+    try { ag = JSON.parse((res[1] && res[1][0] && res[1][0].texto) || '[]'); } catch(e) { ag = []; }
     var el = document.getElementById('av-alerta');
-    if (!r.length) { el.hidden = true; return; }
-    var nuevo = r.some(function(c){ return !avYaSono[c.telefono + c.contexto.aviso.creado]; });
+    if (!r.length && !ag.length) { el.hidden = true; return; }
+    var nuevo = r.some(function(c){ return !avYaSono[c.telefono + c.contexto.aviso.creado]; }) ||
+      ag.some(function(a){ return !avYaSono['ag:' + a.nombre + a.veces]; });
     r.forEach(function(c){ avYaSono[c.telefono + c.contexto.aviso.creado] = 1; });
+    ag.forEach(function(a){ avYaSono['ag:' + a.nombre + a.veces] = 1; });
     if (nuevo) waSonar();
-    el.innerHTML = r.map(function(c){
+    el.innerHTML = ag.map(function(a){
+      return '<div class="av-f"><div>🚫 <b>Agotado: ' + waEsc(a.nombre) + '</b><br><small>Lo ' + (a.veces > 1 ? 'pidieron ' + a.veces + ' clientes' : 'pidió un cliente') + ' por WhatsApp. Enciéndelo o súbele stock en cuanto llegue.</small></div>' +
+        '<span onclick="event.stopPropagation();avAgotadoOk(decodeURIComponent(\'' + encodeURIComponent(a.nombre).replace(/'/g, '%27') + '\'))">Enterado</span></div>';
+    }).join('') + r.map(function(c){
       var a = c.contexto.aviso || {}, p = a.pedido || null;
       var quien = a.quien === 'repartidor' ? '🛵 Repartidor' : '👤 Cliente';
       var plat = a.plataforma && a.plataforma !== 'propio' && a.plataforma !== 'no se sabe' ? ' · ' + waEsc(a.plataforma.toUpperCase()) : '';
@@ -4641,6 +4651,13 @@ function avRevisar(){
     }).join('');
     el.hidden = false;
   }).catch(function(){});
+}
+function avAgotadoOk(nombre){
+  sbFetch('config_orp?clave=eq.bot_agotados&select=texto').then(function(r){
+    var ag = []; try { ag = JSON.parse((r[0] && r[0].texto) || '[]'); } catch(e) {}
+    ag = ag.filter(function(a){ return a.nombre !== nombre; });
+    return sbFetch('config_orp?clave=eq.bot_agotados', 'PATCH', {texto: JSON.stringify(ag)});
+  }).then(function(){ avRevisar(); }).catch(function(e){ toast(e.message, true); });
 }
 function avAbrir(tel){
   irVista('whatsapp', document.querySelector('.nav-tab[data-vista=whatsapp]'));
