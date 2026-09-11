@@ -199,15 +199,44 @@ function promosTexto(promos: Promo[], m: Awaited<ReturnType<typeof cargarMenu>>)
 }
 
 // ---------- envío ----------
+// Busca como en Google Maps: sirve con dirección («Allende 123, Centro») o con el nombre de un lugar
+// («Fiscalía General del Estado, Nuevo Centro Metropolitano»). Primero Places (lugares), luego Geocoding (direcciones).
+async function buscarLugar(texto: string): Promise<{ lat: number; lng: number; direccion: string; lugar?: string; via: string } | null> {
+  const q = /saltillo|arteaga|ramos arizpe|coahuila/i.test(texto) ? texto : texto + ", Saltillo, Coahuila";
+  try {
+    const r = await fetch("https://places.googleapis.com/v1/places:searchText", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "X-Goog-Api-Key": GMAPS_KEY, "X-Goog-FieldMask": "places.displayName,places.formattedAddress,places.location" },
+      body: JSON.stringify({ textQuery: q, languageCode: "es", regionCode: "MX", locationBias: { circle: { center: { latitude: ORIGEN.lat, longitude: ORIGEN.lng }, radius: 40000 } } }),
+    });
+    const j = await r.json();
+    const p = j.places?.[0];
+    if (p?.location) return { lat: p.location.latitude, lng: p.location.longitude, direccion: p.formattedAddress ?? q, lugar: p.displayName?.text, via: "places" };
+    if (!r.ok) console.error("places", r.status, JSON.stringify(j).slice(0, 300));
+  } catch (e) { console.error("places", e); }
+  try { // API vieja de lugares, por si la nueva no está habilitada en la llave
+    const u = `https://maps.googleapis.com/maps/api/place/findplacefromtext/json?input=${encodeURIComponent(q)}&inputtype=textquery` +
+      `&fields=name,formatted_address,geometry&locationbias=circle:40000@${ORIGEN.lat},${ORIGEN.lng}&language=es&key=${GMAPS_KEY}`;
+    const j = await (await fetch(u)).json();
+    const c = j.candidates?.[0];
+    if (c?.geometry?.location) return { lat: c.geometry.location.lat, lng: c.geometry.location.lng, direccion: c.formatted_address ?? q, lugar: c.name, via: "places-v1" };
+    if (j.status && j.status !== "ZERO_RESULTS") console.error("findplace", j.status, j.error_message ?? "");
+  } catch (e) { console.error("findplace", e); }
+  const u = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(q + ", México")}` +
+    `&bounds=25.30,-101.20|25.60,-100.80&region=mx&language=es&key=${GMAPS_KEY}`;
+  const g = await (await fetch(u)).json();
+  const r = g.results?.[0];
+  // si solo encontró «Saltillo» (la ciudad entera) no sirve para entregar
+  if (!r || (r.types ?? []).some((t: string) => ["locality", "administrative_area_level_1", "administrative_area_level_2", "country"].includes(t))) return null;
+  return { lat: r.geometry.location.lat, lng: r.geometry.location.lng, direccion: r.formatted_address, via: "geocode" };
+}
+
 async function cotizarEnvio(direccion: string | undefined, lat?: number, lng?: number) {
-  let dLat = lat, dLng = lng, formateada = direccion ?? "";
+  let dLat = lat, dLng = lng, formateada = direccion ?? "", lugar: string | undefined;
   if ((dLat == null || dLng == null) && direccion && GMAPS_KEY) {
-    const u = `https://maps.googleapis.com/maps/api/geocode/json?address=${encodeURIComponent(direccion + ", Coahuila, México")}` +
-      `&bounds=25.30,-101.20|25.60,-100.80&region=mx&language=es&key=${GMAPS_KEY}`;
-    const g = await (await fetch(u)).json();
-    const r = g.results?.[0];
-    if (!r) return { ok: false, error: "No encontré esa dirección. Pídele calle, número y colonia, o que mande su ubicación 📍." };
-    dLat = r.geometry.location.lat; dLng = r.geometry.location.lng; formateada = r.formatted_address;
+    const r = await buscarLugar(direccion);
+    if (!r) return { ok: false, error: "No encontré ese lugar. Pídele el nombre de algún lugar conocido cerca, calle y colonia, o que mande su ubicación 📍." };
+    dLat = r.lat; dLng = r.lng; formateada = r.direccion; lugar = r.lugar;
   }
   if (dLat == null || dLng == null) return { ok: false, error: "Necesito la dirección completa o la ubicación 📍 del cliente." };
   let km = kmLineaRecta(dLat, dLng), metodo = "aprox";
@@ -222,7 +251,8 @@ async function cotizarEnvio(direccion: string | undefined, lat?: number, lng?: n
     } catch (_) { /* se queda la aproximación */ }
   }
   const enZona = !formateada || ZONA.test(formateada);
-  return { ok: true, direccion: formateada, lat: dLat, lng: dLng, km: Math.round(km * 10) / 10, envio: costoEnvio(km), metodo, en_zona: enZona };
+  return { ok: true, lugar, direccion: formateada, lat: dLat, lng: dLng, km: Math.round(km * 10) / 10, envio: costoEnvio(km), metodo, en_zona: enZona,
+    nota: lugar ? `Confírmale al cliente el lugar que encontré: «${lugar}, ${formateada}» y pídele referencias para encontrarlo ahí (edificio, puerta, a quién preguntar).` : undefined };
 }
 
 // ---------- herramientas que puede usar Claude ----------
@@ -231,7 +261,7 @@ const TOOLS = [
     name: "cotizar_envio",
     description: "Calcula el costo de envío a domicilio con la tarifa de la cocina. Úsala en cuanto tengas la dirección (o si el cliente mandó su ubicación 📍, con usar_ubicacion=true).",
     input_schema: { type: "object", properties: {
-      direccion: { type: "string", description: "Calle, número, colonia y municipio" },
+      direccion: { type: "string", description: "Lo que diga el cliente tal cual: calle, número y colonia, o el nombre de un lugar conocido (ej. «Fiscalía General del Estado, Nuevo Centro Metropolitano», «Hospital Universitario», «Galerías Saltillo»). Se busca como en Google Maps." },
       usar_ubicacion: { type: "boolean", description: "true si el cliente compartió su ubicación de WhatsApp" },
     } },
   },
@@ -302,7 +332,7 @@ CÓMO ATIENDES
 - Para cada producto con grupos «ELIGE UNA», pregunta lo que falte (totopo, salsa, proteína, masa, guiso). Si no le importa, sugiere lo más pedido: totopo Natural, salsa Verde cremosa, proteína Pollo.
 - Los chilaquiles llevan toppings incluidos (queso, crema, frijoles, cebolla y cilantro). SIEMPRE pregunta, por cada chilaquil, si lo quiere con todo o sin alguno (ej. "¿Con todo: queso, crema, frijoles, cebolla y cilantro?"). Si no lo preguntas, el sistema no te deja cerrar el pedido.
 - Cuando haga sentido, sugiere UNA cosa extra (un refresco, un extra de proteína) sin insistir.
-- Pregunta: ¿lo pasa a recoger a la tienda o se lo llevamos a domicilio? (NUNCA le digas «pickup» al cliente: mucha gente no conoce la palabra. Di «recoger en tienda». En el resumen escribe «🏪 Recoger en tienda» o «🛵 A domicilio».) Si es a domicilio pide calle, número, colonia y referencias (o su ubicación 📍) y usa cotizar_envio. Si queda fuera de zona, díselo con amabilidad y ofrece que lo pase a recoger a la tienda.
+- Pregunta: ¿lo pasa a recoger a la tienda o se lo llevamos a domicilio? (NUNCA le digas «pickup» al cliente: mucha gente no conoce la palabra. Di «recoger en tienda». En el resumen escribe «🏪 Recoger en tienda» o «🛵 A domicilio».) Si es a domicilio pide la dirección, o el nombre del lugar si es un lugar conocido (oficina, hospital, plaza, escuela), o su ubicación 📍, y usa cotizar_envio. Si el cliente no sabe calle y número pero te dice el nombre del lugar, NO le insistas: busca con ese nombre, confírmale el lugar que encontraste y pídele referencias (edificio, puerta, a quién preguntar). Si queda fuera de zona, díselo con amabilidad y ofrece que lo pase a recoger a la tienda.
 - Nunca digas un total sin usar antes revisar_pedido.
 - CIERRE: cuando ya tengas TODO (productos con sus opciones y toppings, recoger en tienda o domicilio con dirección, forma de pago y nombre), usa revisar_pedido con todo eso y manda UN resumen final completo: cada producto con su detalle, entrega (y dirección), pago, nombre y el *total*. Termina preguntando "¿Es correcto? ¿Es todo?".
 - Solo si el cliente responde a ese resumen con algo afirmativo (sí, ok, correcto, así está bien, es todo, va, dale, 👍…) usa registrar_pedido con exactamente lo mismo. Si agrega o cambia algo, vuelve a usar revisar_pedido y a confirmar. El sistema no te deja registrar sin ese resumen confirmado.
@@ -967,6 +997,7 @@ Deno.serve(async (req) => {
     return json({ ok: true, mensaje: r.ok });
   }
   if (body.accion === "reparto_plantilla") return json(await plantillaReparto(!!body.crear));
+  if (body.accion === "buscar_lugar") return json(await cotizarEnvio(String(body.texto ?? "").slice(0, 200)));
 
   // Simulador del POS: nunca manda WhatsApp, siempre con el teléfono SIMULADOR
   if (body.simulador) {
