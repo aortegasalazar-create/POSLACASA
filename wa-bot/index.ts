@@ -70,17 +70,28 @@ type Grupo = { id: number; nombre: string; tipo: string; pids: number[]; orden: 
 type Producto = { id: number; nombre: string; precio: number; descripcion: string; categoria: string };
 
 async function cargarMenu(excluir: number[]) {
-  const [p, g, o] = await Promise.all([
-    sb.from("productos").select("id,nombre,precio,descripcion,categorias(nombre)").eq("activo", true).order("nombre"),
+  const [p, g, o, pOff, oOff] = await Promise.all([
+    sb.from("productos").select("id,nombre,precio,descripcion,stock,categorias(nombre)").eq("activo", true).order("nombre"),
     sb.from("grupos_modificadores").select("id,nombre,tipo,producto_ids,orden").eq("activo", true).order("orden"),
     sb.from("opciones_modificadores").select("id,grupo_id,nombre,precio_extra").eq("activo", true).order("id"),
+    sb.from("productos").select("id,nombre").eq("activo", false),
+    sb.from("opciones_modificadores").select("id,grupo_id,nombre").eq("activo", false),
   ]);
-  const productos: Producto[] = (p.data ?? []).filter((x) => !excluir.includes(x.id)).map((x: any) => ({
+  // Lo que se apagó o se quedó sin stock: el bot no lo vende, avisa al cliente y le avisa al equipo
+  const gruposActivos = new Map((g.data ?? []).map((x: any) => [x.id, x.nombre]));
+  const activasNom = new Set((o.data ?? []).map((x: any) => String(x.nombre).trim().toLowerCase())); // si sigue activa en otro grupo, no está agotada
+  const agotados = [
+    ...(p.data ?? []).filter((x: any) => !excluir.includes(x.id) && x.stock != null && Number(x.stock) <= 0).map((x: any) => ({ id: x.id, nombre: x.nombre, tipo: "producto", motivo: "sin stock" })),
+    ...(pOff.data ?? []).filter((x: any) => !excluir.includes(x.id)).map((x: any) => ({ id: x.id, nombre: x.nombre, tipo: "producto", motivo: "apagado" })),
+    ...(oOff.data ?? []).filter((x: any) => gruposActivos.has(x.grupo_id) && !activasNom.has(String(x.nombre).trim().toLowerCase())).map((x: any) => ({ id: x.id, nombre: `${x.nombre} (${gruposActivos.get(x.grupo_id)})`, tipo: "opcion", motivo: "apagado" })),
+  ];
+  const sinStock = new Set(agotados.filter((a) => a.tipo === "producto").map((a) => a.id));
+  const productos: Producto[] = (p.data ?? []).filter((x) => !excluir.includes(x.id) && !sinStock.has(x.id)).map((x: any) => ({
     id: x.id, nombre: x.nombre, precio: Number(x.precio), descripcion: x.descripcion ?? "", categoria: x.categorias?.nombre ?? "",
   }));
   const grupos: Grupo[] = (g.data ?? []).map((x: any) => ({ id: x.id, nombre: x.nombre, tipo: x.tipo, pids: x.producto_ids ?? [], orden: x.orden ?? 0 }));
   const opciones: Opcion[] = (o.data ?? []).map((x: any) => ({ id: x.id, gid: x.grupo_id, nombre: x.nombre, precio: Number(x.precio_extra || 0) }));
-  return { productos, grupos, opciones };
+  return { productos, grupos, opciones, agotados };
 }
 
 function menuTexto(m: Awaited<ReturnType<typeof cargarMenu>>) {
@@ -104,7 +115,11 @@ function valorarItems(items: ItemIn[], m: Awaited<ReturnType<typeof cargarMenu>>
   const errores: string[] = [];
   const lineas = (items ?? []).map((it) => {
     const p = m.productos.find((x) => x.id === Number(it.producto_id));
-    if (!p) { errores.push(`El producto ${it.producto_id} no está en el menú de WhatsApp`); return null; }
+    if (!p) {
+      const ag = m.agotados.find((a) => a.tipo === "producto" && a.id === Number(it.producto_id));
+      errores.push(ag ? `${ag.nombre} está agotado por ahora: díselo al cliente, ofrécele algo parecido del menú y usa avisar_agotado` : `El producto ${it.producto_id} no está en el menú de WhatsApp`);
+      return null;
+    }
     const cant = Math.max(1, Math.round(Number(it.cantidad || 1)));
     const gs = m.grupos.filter((g) => g.pids.includes(p.id));
     const opc = (ids: number[] | undefined) => (ids ?? []).map((id) => m.opciones.find((o) => o.id === Number(id))).filter(Boolean) as Opcion[];
@@ -315,13 +330,18 @@ const TOOLS = [
     }, required: ["quien", "tema"] },
   },
   {
+    name: "avisar_agotado",
+    description: "Avisa al equipo (alerta en el POS) que un cliente pidió algo que está agotado o apagado, para que lo vuelvan a encender en cuanto llegue. NO pasa el chat al equipo: tú sigues atendiendo al cliente.",
+    input_schema: { type: "object", properties: { nombre: { type: "string", description: "Lo que pidió y no hay, como aparece en la lista de NO DISPONIBLE" } }, required: ["nombre"] },
+  },
+  {
     name: "pasar_a_humano",
     description: "Pasa la conversación al equipo: quejas, algo que no está en el menú, pedidos grandes o para evento, facturas, dudas que no sabes, o si el cliente pide hablar con una persona.",
     input_schema: { type: "object", properties: { motivo: { type: "string" } }, required: ["motivo"] },
   },
 ];
 
-function reglas(c: Awaited<ReturnType<typeof config>>, reciente: string, promosTxt = "") {
+function reglas(c: Awaited<ReturnType<typeof config>>, reciente: string, promosTxt = "", agotadosTxt = "") {
   const t = (k: string) => (c[k]?.texto ?? "").trim();
   return `Eres quien toma los pedidos por WhatsApp de una cocina en Saltillo que tiene dos marcas: LA CASA DEL CHILAQUIL (chilaquiles) y DELIGORDAS (gorditas). Es la misma cocina: en un solo pedido pueden venir productos de las dos.
 
@@ -359,7 +379,7 @@ CÓMO ATIENDES
 - Si te escriben algo que no tiene que ver con pedidos, contesta breve y amable y, si es cliente, regresa al pedido.
 
 ${promosTxt ? "PROMOCIONES VIGENTES (se aplican solas en revisar_pedido; no inventes otras):\n" + promosTxt + "\n- OBLIGATORIO: si el pedido ya trae parte de un combo pero le falta lo demás (ej. pidió chilaquiles grandes y no lleva Coca), en el mensaje donde muestras el resumen agrega ANTES de preguntar si es correcto una línea como: «🎁 Si le agregas una Coca queda en combo y solo pagas $X más (ahorras $Y)». X = precio normal de lo que falta − ahorro del combo. Solo una vez por pedido; si dice que no, no insistas.\n- En el resumen muestra cada promoción aplicada con su descuento, como te la regresa revisar_pedido.\n" : ""}${reciente ? "PEDIDO RECIENTE DE ESTE CLIENTE:\n" + reciente + "\n" : ""}
-MENÚ (ids entre corchetes; los precios son exactos):`;
+${agotadosTxt ? "NO DISPONIBLE AHORA (se terminó o está apagado; NO lo vendas):\n" + agotadosTxt + "\n- Si el cliente pide algo de esta lista, dile con amabilidad que por ahora se nos terminó, ofrécele una alternativa parecida del MENÚ y usa avisar_agotado con su nombre (una vez por producto). No lo menciones si no lo pide.\n\n" : ""}MENÚ (ids entre corchetes; los precios son exactos):`;
 }
 
 // ---------- Claude ----------
@@ -433,7 +453,7 @@ async function atender(tel: string, nombre: string, texto: string, extra: { lat?
   const reciente = await pedidoReciente(tel);
   const promos = await cargarPromos();
   const system = [
-    { type: "text", text: reglas(c, reciente, promosTexto(promos, menu)) },
+    { type: "text", text: reglas(c, reciente, promosTexto(promos, menu), menu.agotados.map((a) => "- " + a.nombre).join("\n")) },
     { type: "text", text: menuTexto(menu), cache_control: { type: "ephemeral" } },
   ];
   const modelo = (c.bot_modelo?.texto || "claude-haiku-4-5-20251001").trim();
@@ -631,6 +651,10 @@ async function herramienta(nombre: string, input: any, ctx: { tel: string; nombr
       ? "Listo, el equipo ya tiene la alerta. Contéstale al repartidor muy breve que ya le avisaste al equipo (y pide el número de pedido o nombre del cliente si no lo sabes)."
       : "Listo, el equipo ya tiene la alerta. Dile al cliente que en un momento lo atienden." };
   }
+  if (nombre === "avisar_agotado") {
+    await registrarAgotado(String(input.nombre ?? "").trim(), ctx.simulado);
+    return { ok: true, nota: "Listo, el equipo ya tiene el aviso. Sigue atendiendo al cliente con otra opción." };
+  }
   if (nombre === "pasar_a_humano") {
     await crearAviso(ctx.tel, ctx.nombre, { quien: "cliente", tema: "Pide atención de una persona: " + (input.motivo ?? "") }, ctx.contexto);
     return { ok: true, nota: "Dile al cliente que en un momento lo atiende alguien del equipo." };
@@ -668,6 +692,18 @@ async function crearAviso(tel: string, nombre: string, a: { quien: string; tema:
   await sb.from("wa_chats").upsert(fila);
   await sb.from("wa_mensajes").insert({ telefono: tel, rol: "sistema", texto: `⚠️ Aviso al equipo (${a.quien}): ${tema}` });
   return { nuevo: !reciente };
+}
+
+// Lista de lo que los clientes pidieron y estaba agotado/apagado (config_orp.bot_agotados). El POS la muestra hasta «Enterado».
+async function registrarAgotado(nombre: string, simulado: boolean) {
+  if (!nombre) return;
+  const { data } = await sb.from("config_orp").select("texto").eq("clave", "bot_agotados").maybeSingle();
+  let lista: { nombre: string; veces: number; primero: string; ultimo: string }[] = [];
+  try { lista = JSON.parse(data?.texto || "[]"); } catch (_) { lista = []; }
+  const ahora = new Date().toISOString();
+  const ya = lista.find((x) => x.nombre.toLowerCase() === nombre.toLowerCase());
+  if (ya) { ya.veces++; ya.ultimo = ahora; } else lista.push({ nombre, veces: 1, primero: ahora, ultimo: ahora });
+  await sb.from("config_orp").upsert({ clave: "bot_agotados", texto: JSON.stringify(lista), actualizado: ahora }, { onConflict: "clave" });
 }
 
 // ---------- traducir lo que manda WhatsApp ----------
