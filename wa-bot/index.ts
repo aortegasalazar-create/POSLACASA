@@ -305,7 +305,7 @@ CÓMO ATIENDES
 - Si algo no está claro o no lo sabes, pregunta o usa pasar_a_humano. Nunca prometas algo que no está aquí.
 - Si te escriben algo que no tiene que ver con pedidos, contesta breve y amable y regresa al pedido.
 
-${promosTxt ? "PROMOCIONES VIGENTES (se aplican solas en revisar_pedido; no inventes otras):\n" + promosTxt + "\n- Si al pedido le falta poco para armar un combo (ej. pidió chilaquiles grandes y no lleva refresco), sugiérelo una vez diciendo cuánto ahorra.\n- En el resumen muestra cada promoción aplicada con su descuento, como te la regresa revisar_pedido.\n" : ""}${reciente ? "PEDIDO RECIENTE DE ESTE CLIENTE:\n" + reciente + "\n" : ""}
+${promosTxt ? "PROMOCIONES VIGENTES (se aplican solas en revisar_pedido; no inventes otras):\n" + promosTxt + "\n- OBLIGATORIO: si el pedido ya trae parte de un combo pero le falta lo demás (ej. pidió chilaquiles grandes y no lleva Coca), en el mensaje donde muestras el resumen agrega ANTES de preguntar si es correcto una línea como: «🎁 Si le agregas una Coca queda en combo y solo pagas $X más (ahorras $Y)». X = precio normal de lo que falta − ahorro del combo. Solo una vez por pedido; si dice que no, no insistas.\n- En el resumen muestra cada promoción aplicada con su descuento, como te la regresa revisar_pedido.\n" : ""}${reciente ? "PEDIDO RECIENTE DE ESTE CLIENTE:\n" + reciente + "\n" : ""}
 MENÚ (ids entre corchetes; los precios son exactos):`;
 }
 
