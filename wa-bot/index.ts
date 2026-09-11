@@ -134,6 +134,64 @@ function valorarItems(items: ItemIn[], m: Awaited<ReturnType<typeof cargarMenu>>
   return { lineas, errores, subtotal: lineas.reduce((s, l) => s + l.importe, 0) };
 }
 
+// ---------- promociones (misma regla que el POS) ----------
+type Promo = { id: number; nombre: string; tipo: string; activo: boolean; porcentaje: number | null; producto_ids: number[] | null;
+  componentes: { producto_ids: number[]; cantidad: number }[] | null; precio: number | null; dias: number[] | null;
+  hora_ini: string | null; hora_fin: string | null; whatsapp: boolean };
+async function cargarPromos(): Promise<Promo[]> {
+  const { data } = await sb.from("promociones").select("*").eq("activo", true).eq("whatsapp", true);
+  const ahora = new Date(new Date().toLocaleString("en-US", { timeZone: TZ }));
+  const hm = String(ahora.getHours()).padStart(2, "0") + ":" + String(ahora.getMinutes()).padStart(2, "0");
+  return ((data ?? []) as Promo[]).filter((p) => (!p.dias?.length || p.dias.includes(ahora.getDay())) &&
+    (!p.hora_ini || hm >= p.hora_ini) && (!p.hora_fin || hm <= p.hora_fin));
+}
+type Aplicada = { id: number; nombre: string; tipo: string; veces: number; descuento: number };
+function aplicarPromos(lineas: any[], promos: Promo[], m: Awaited<ReturnType<typeof cargarMenu>>) {
+  const base = (pid: number) => m.productos.find((x) => x.id === pid)?.precio ?? 0;
+  const unidades: { pid: number; base: number; unit: number; usada: boolean }[] = [];
+  for (const l of lineas) for (let i = 0; i < (l.cantidad || 1); i++) unidades.push({ pid: Number(l.producto_id), base: base(Number(l.producto_id)), unit: Number(l.precio_unitario), usada: false });
+  const teorico = (c: Promo) => (c.componentes ?? []).reduce((s, comp) => s + Math.max(0, ...comp.producto_ids.map(base)) * (comp.cantidad || 1), 0) - Number(c.precio ?? 0);
+  const aplicadas: Aplicada[] = [];
+  for (const c of promos.filter((p) => p.tipo === "combo" && p.componentes?.length && p.precio != null).sort((a, b) => teorico(b) - teorico(a))) {
+    let veces = 0, ahorro = 0;
+    while (true) {
+      const elegidas: typeof unidades = [];
+      let ok = true;
+      for (const comp of c.componentes!) {
+        for (let k = 0; k < (comp.cantidad || 1) && ok; k++) {
+          const cand = unidades.filter((u) => !u.usada && !elegidas.includes(u) && comp.producto_ids.includes(u.pid)).sort((a, b) => b.base - a.base)[0];
+          if (!cand) ok = false; else elegidas.push(cand);
+        }
+        if (!ok) break;
+      }
+      if (!ok) break;
+      const suma = elegidas.reduce((s, u) => s + u.base, 0);
+      if (suma - Number(c.precio) <= 0) break;
+      elegidas.forEach((u) => (u.usada = true));
+      veces++; ahorro += suma - Number(c.precio);
+    }
+    if (veces) aplicadas.push({ id: c.id, nombre: c.nombre, tipo: "combo", veces, descuento: Math.round(ahorro * 100) / 100 });
+  }
+  const porPromo: Record<number, Aplicada> = {};
+  for (const u of unidades.filter((u) => !u.usada)) {
+    let mejor: Promo | null = null;
+    for (const p of promos) if (p.tipo === "descuento" && p.porcentaje && p.producto_ids?.includes(u.pid) && (!mejor || Number(p.porcentaje) > Number(mejor.porcentaje))) mejor = p;
+    if (!mejor) continue;
+    porPromo[mejor.id] ??= { id: mejor.id, nombre: mejor.nombre, tipo: "descuento", veces: 0, descuento: 0 };
+    porPromo[mejor.id].veces++; porPromo[mejor.id].descuento += u.unit * Number(mejor.porcentaje) / 100;
+  }
+  for (const a of Object.values(porPromo)) { a.descuento = Math.round(a.descuento * 100) / 100; aplicadas.push(a); }
+  return { aplicadas, descuento: Math.round(aplicadas.reduce((s, a) => s + a.descuento, 0) * 100) / 100 };
+}
+const promoTxt = (a: Aplicada) => `${a.tipo === "combo" ? "🎁" : "🏷️"} ${a.nombre}${a.veces > 1 ? " ×" + a.veces : ""}: −${dinero(a.descuento)}`;
+function promosTexto(promos: Promo[], m: Awaited<ReturnType<typeof cargarMenu>>) {
+  const nom = (pid: number) => m.productos.find((x) => x.id === pid)?.nombre ?? `#${pid}`;
+  const base = (pid: number) => m.productos.find((x) => x.id === pid)?.precio ?? 0;
+  return promos.map((p) => p.tipo === "combo"
+    ? `- 🎁 ${p.nombre}: ${(p.componentes ?? []).map((c) => (c.cantidad > 1 ? c.cantidad + "× " : "") + c.producto_ids.map(nom).join(" o ")).join(" + ")} por ${dinero(Number(p.precio))} (normal ${dinero((p.componentes ?? []).reduce((s, c) => s + Math.max(0, ...c.producto_ids.map(base)) * (c.cantidad || 1), 0))})`
+    : `- 🏷️ ${p.nombre}: ${p.porcentaje}% de descuento en ${(p.producto_ids ?? []).map(nom).join(", ")}`).join("\n");
+}
+
 // ---------- envío ----------
 async function cotizarEnvio(direccion: string | undefined, lat?: number, lng?: number) {
   let dLat = lat, dLng = lng, formateada = direccion ?? "";
@@ -217,7 +275,7 @@ const TOOLS = [
   },
 ];
 
-function reglas(c: Awaited<ReturnType<typeof config>>, reciente: string) {
+function reglas(c: Awaited<ReturnType<typeof config>>, reciente: string, promosTxt = "") {
   const t = (k: string) => (c[k]?.texto ?? "").trim();
   return `Eres quien toma los pedidos por WhatsApp de una cocina en Saltillo que tiene dos marcas: LA CASA DEL CHILAQUIL (chilaquiles) y DELIGORDAS (gorditas). Es la misma cocina: en un solo pedido pueden venir productos de las dos.
 
@@ -247,7 +305,7 @@ CÓMO ATIENDES
 - Si algo no está claro o no lo sabes, pregunta o usa pasar_a_humano. Nunca prometas algo que no está aquí.
 - Si te escriben algo que no tiene que ver con pedidos, contesta breve y amable y regresa al pedido.
 
-${reciente ? "PEDIDO RECIENTE DE ESTE CLIENTE:\n" + reciente + "\n" : ""}
+${promosTxt ? "PROMOCIONES VIGENTES (se aplican solas en revisar_pedido; no inventes otras):\n" + promosTxt + "\n- Si al pedido le falta poco para armar un combo (ej. pidió chilaquiles grandes y no lleva refresco), sugiérelo una vez diciendo cuánto ahorra.\n- En el resumen muestra cada promoción aplicada con su descuento, como te la regresa revisar_pedido.\n" : ""}${reciente ? "PEDIDO RECIENTE DE ESTE CLIENTE:\n" + reciente + "\n" : ""}
 MENÚ (ids entre corchetes; los precios son exactos):`;
 }
 
@@ -320,8 +378,9 @@ async function atender(tel: string, nombre: string, texto: string, extra: { lat?
   const excluir = (c.bot_excluir?.texto ?? "").split(",").map((x) => Number(x.trim())).filter(Boolean);
   const menu = await cargarMenu(excluir);
   const reciente = await pedidoReciente(tel);
+  const promos = await cargarPromos();
   const system = [
-    { type: "text", text: reglas(c, reciente) },
+    { type: "text", text: reglas(c, reciente, promosTexto(promos, menu)) },
     { type: "text", text: menuTexto(menu), cache_control: { type: "ephemeral" } },
   ];
   const modelo = (c.bot_modelo?.texto || "claude-haiku-4-5-20251001").trim();
@@ -337,7 +396,7 @@ async function atender(tel: string, nombre: string, texto: string, extra: { lat?
     const resultados: any[] = [];
     for (const b of r.content.filter((b: any) => b.type === "tool_use")) {
       let out: any;
-      try { out = await herramienta(b.name, b.input, { tel, nombre, contexto, menu, simulado: !!extra.simulado, msgId: miId }); }
+      try { out = await herramienta(b.name, b.input, { tel, nombre, contexto, menu, simulado: !!extra.simulado, msgId: miId, promos }); }
       catch (e) { out = { ok: false, error: String(e) }; }
       if (b.name === "registrar_pedido" && out?.ok) pedido = out;
       resultados.push({ type: "tool_result", tool_use_id: b.id, content: JSON.stringify(out) });
@@ -380,7 +439,7 @@ function firmaPedido(lineas: any[], input: any) {
 }
 
 // Agregar productos a un pedido que el cliente ya hizo
-async function ampliar(nombre: string, input: any, ctx: { tel: string; nombre: string; contexto: any; menu: any; simulado: boolean; msgId: number }) {
+async function ampliar(nombre: string, input: any, ctx: { tel: string; nombre: string; contexto: any; menu: any; simulado: boolean; msgId: number; promos: Promo[] }) {
   const r = await datosReciente(ctx.tel);
   if (!r || r.p.id !== Number(input.agregar_a)) {
     return { ok: false, errores: [`No encuentro un pedido reciente #${input.agregar_a} de este cliente. Si quiere algo más, hazlo como pedido nuevo.`] };
@@ -390,14 +449,22 @@ async function ampliar(nombre: string, input: any, ctx: { tel: string; nombre: s
   }
   const v = valorarItems(input.items, ctx.menu);
   if (v.errores.length) return { ok: false, errores: v.errores };
-  const nuevoTotal = r.total + v.subtotal;
-  const resumen = v.lineas.map((l: any) => `${l.cantidad}x ${l.nombre}${l.detalle ? " (" + l.detalle + ")" : ""} — ${dinero(l.importe)}`);
+  // promociones sobre el pedido completo; aquí solo va la diferencia contra lo que ya tenía
+  const previos = [r.p, ...r.hijos];
+  const antes: Record<number, number> = {};
+  let descAntes = 0;
+  for (const x of previos) { descAntes += Number(x.descuento ?? 0); for (const a of (x.promos ?? [])) antes[a.id] = (antes[a.id] ?? 0) + Number(a.descuento); }
+  const todo = aplicarPromos([...previos.flatMap((x: any) => x.items ?? []), ...v.lineas], ctx.promos, ctx.menu);
+  const nuevas = todo.aplicadas.map((a) => ({ ...a, descuento: Math.round((a.descuento - (antes[a.id] ?? 0)) * 100) / 100 })).filter((a) => a.descuento > 0);
+  const descExtra = Math.max(0, Math.round((todo.descuento - descAntes) * 100) / 100);
+  const nuevoTotal = r.total + v.subtotal - descExtra;
+  const resumen = [...v.lineas.map((l: any) => `${l.cantidad}x ${l.nombre}${l.detalle ? " (" + l.detalle + ")" : ""} — ${dinero(l.importe)}`), ...nuevas.map(promoTxt)];
   const firma = firmaPedido(v.lineas, { agregar_a: r.p.id, entrega: r.p.entrega, pago: r.p.pago });
   if (nombre === "revisar_pedido") {
     const previa = ctx.contexto.revision;
     ctx.contexto.revision = previa && previa.firma === firma ? previa : { firma, msg: ctx.msgId };
     await sb.from("wa_chats").update({ contexto: ctx.contexto }).eq("telefono", ctx.tel);
-    return { ok: true, pedido: r.p.id, se_agrega: resumen, subtotal_agregado: v.subtotal, total_anterior: r.total, nuevo_total: nuevoTotal,
+    return { ok: true, pedido: r.p.id, se_agrega: resumen, subtotal_agregado: v.subtotal, descuento_extra: descExtra, total_anterior: r.total, nuevo_total: nuevoTotal,
       pago: r.p.pago, paga_con_anterior: r.p.paga_con,
       siguiente: "Dile qué se agrega al pedido #" + r.p.id + " y el nuevo total, y pregunta si es correcto. Registra solo cuando conteste que sí." };
   }
@@ -412,8 +479,11 @@ async function ampliar(nombre: string, input: any, ctx: { tel: string; nombre: s
   let folio = r.p.id, ampliacion = false;
   if (r.p.estado === "nuevo") {
     // La cocina todavía no lo acepta: se actualiza el mismo pedido
+    const unido = [...(r.p.items ?? []), ...v.lineas];
+    const prU = aplicarPromos(unido, ctx.promos, ctx.menu);
+    const subU = Number(r.p.subtotal) + v.subtotal;
     const { error } = await sb.from("wa_pedidos").update({
-      items: [...(r.p.items ?? []), ...v.lineas], subtotal: Number(r.p.subtotal) + v.subtotal, total: Number(r.p.total) + v.subtotal,
+      items: unido, subtotal: subU, total: subU - prU.descuento + Number(r.p.envio ?? 0), descuento: prU.descuento, promos: prU.aplicadas.length ? prU.aplicadas : null,
       paga_con: pagaCon, notas: nota(r.p.notas, "➕ El cliente agregó: " + resumen.join("; ")), actualizado: new Date().toISOString(),
     }).eq("id", r.p.id).eq("estado", "nuevo");
     if (error) return { ok: false, errores: ["No se pudo actualizar: " + error.message] };
@@ -421,7 +491,8 @@ async function ampliar(nombre: string, input: any, ctx: { tel: string; nombre: s
     // Ya aceptado: va como ampliación, solo con lo nuevo (así la venta no se cuenta dos veces)
     const { data, error } = await sb.from("wa_pedidos").insert({
       telefono: ctx.tel, nombre: r.p.nombre, estado: "nuevo", entrega: r.p.entrega, direccion: r.p.direccion, referencias: r.p.referencias,
-      lat: r.p.lat, lng: r.p.lng, km: r.p.km, pago: r.p.pago, paga_con: pagaCon, items: v.lineas, subtotal: v.subtotal, envio: 0, total: v.subtotal,
+      lat: r.p.lat, lng: r.p.lng, km: r.p.km, pago: r.p.pago, paga_con: pagaCon, items: v.lineas, subtotal: v.subtotal, envio: 0, total: v.subtotal - descExtra,
+      descuento: descExtra, promos: nuevas.length ? nuevas : null,
       notas: nota(input.notas, `Agregado al pedido #${r.p.id}. Total del pedido completo: ${dinero(nuevoTotal)}`), simulado: r.p.simulado, pedido_padre: r.p.id,
     }).select("id").single();
     if (error) return { ok: false, errores: ["No se pudo guardar: " + error.message] };
@@ -433,7 +504,7 @@ async function ampliar(nombre: string, input: any, ctx: { tel: string; nombre: s
     nota: `Dile que ya quedó agregado a su pedido #${r.p.id} y el nuevo total. No le des otro número de pedido.` };
 }
 
-async function herramienta(nombre: string, input: any, ctx: { tel: string; nombre: string; contexto: any; menu: any; simulado: boolean; msgId: number }) {
+async function herramienta(nombre: string, input: any, ctx: { tel: string; nombre: string; contexto: any; menu: any; simulado: boolean; msgId: number; promos: Promo[] }) {
   if (nombre === "cotizar_envio") {
     const u = input.usar_ubicacion ? ctx.contexto.ubicacion : null;
     const r = await cotizarEnvio(input.direccion, u?.lat, u?.lng);
@@ -462,8 +533,10 @@ async function herramienta(nombre: string, input: any, ctx: { tel: string; nombr
       if (!cot) return { ok: false, errores: ["Falta cotizar el envío: pide la dirección o la ubicación y usa cotizar_envio"] };
       envio = cot.envio;
     }
-    const total = v.subtotal + envio;
-    const resumen = v.lineas.map((l: any) => `${l.cantidad}x ${l.nombre}${l.detalle ? " (" + l.detalle + ")" : ""} — ${dinero(l.importe)}`);
+    const pr = aplicarPromos(v.lineas, ctx.promos, ctx.menu);
+    const total = v.subtotal - pr.descuento + envio;
+    const resumen = [...v.lineas.map((l: any) => `${l.cantidad}x ${l.nombre}${l.detalle ? " (" + l.detalle + ")" : ""} — ${dinero(l.importe)}`),
+      ...pr.aplicadas.map(promoTxt)];
     const firma = firmaPedido(v.lineas, input);
     if (nombre === "revisar_pedido") {
       const completo = !!(input.entrega && input.pago);
@@ -471,7 +544,7 @@ async function herramienta(nombre: string, input: any, ctx: { tel: string; nombr
       const previa = ctx.contexto.revision;
       ctx.contexto.revision = !completo ? null : (previa && previa.firma === firma ? previa : { firma, msg: ctx.msgId });
       await sb.from("wa_chats").update({ contexto: ctx.contexto }).eq("telefono", ctx.tel);
-      return { ok: true, lineas: resumen, subtotal: v.subtotal, envio, total,
+      return { ok: true, lineas: resumen, subtotal: v.subtotal, descuento: pr.descuento, envio, total,
         siguiente: completo ? "Manda el resumen final completo y pregunta si es correcto y si es todo. Registra solo cuando conteste que sí."
           : "Todavía falta " + [!input.entrega && "pickup o domicilio", !input.pago && "forma de pago"].filter(Boolean).join(" y ") + " para el resumen final." };
     }
@@ -490,6 +563,7 @@ async function herramienta(nombre: string, input: any, ctx: { tel: string; nombr
       direccion: input.entrega === "domicilio" ? (cot?.direccion || input.direccion || null) : null,
       referencias: input.referencias ?? null, lat: cot?.lat ?? null, lng: cot?.lng ?? null, km: cot?.km ?? null,
       pago: input.pago, paga_con: input.paga_con ?? null, items: v.lineas, subtotal: v.subtotal, envio, total,
+      descuento: pr.descuento, promos: pr.aplicadas.length ? pr.aplicadas : null,
       notas: input.notas ?? null, simulado: ctx.simulado || D360_BASE.includes("sandbox"), // con el número de prueba nada se cobra
     };
     const { data, error } = await sb.from("wa_pedidos").insert(fila).select("id").single();
