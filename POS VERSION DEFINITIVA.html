@@ -2672,6 +2672,8 @@ function setDelPeriodo(p) {
   cargarDeliveryData(ini, fin);
 }
 
+// Solo envíos propios (mostrador y WhatsApp): los de plataformas no traen la ubicación del cliente
+var DEL_PROPIOS = 'or=(canal.is.null,canal.not.in.(rappi,didi_food,uber_eats))&estado=neq.cancelada';
 function cargarDeliveryData(ini, fin) {
   ini = ini || document.getElementById('del-fecha-ini').value || hoyLocal().substring(0,7)+'-01';
   fin = fin || document.getElementById('del-fecha-fin').value || hoyLocal();
@@ -2681,10 +2683,10 @@ function cargarDeliveryData(ini, fin) {
   var finUTC = finDate.toISOString().split('T')[0]+'T05:59:59';
 
   Promise.all([
-    sbFetch('ventas?tipo_servicio=eq.delivery&lat=not.is.null&fecha=gte.'+iniUTC+'&fecha=lte.'+finUTC+'&order=fecha.desc'),
-    sbFetch('ventas?tipo_servicio=eq.delivery&fecha=gte.'+iniUTC+'&fecha=lte.'+finUTC+'&order=fecha.desc'),
+    sbFetch('ventas?tipo_servicio=eq.delivery&'+DEL_PROPIOS+'&lat=not.is.null&fecha=gte.'+iniUTC+'&fecha=lte.'+finUTC+'&order=fecha.desc'),
+    sbFetch('ventas?tipo_servicio=eq.delivery&'+DEL_PROPIOS+'&fecha=gte.'+iniUTC+'&fecha=lte.'+finUTC+'&order=fecha.desc'),
     sbFetch('clientes?select=*'),
-    sbFetch('ventas?tipo_servicio=eq.delivery&cliente_id=not.is.null&fecha=gte.'+iniUTC+'&fecha=lte.'+finUTC+'&select=cliente_id,total,fecha')
+    sbFetch('ventas?tipo_servicio=eq.delivery&'+DEL_PROPIOS+'&cliente_id=not.is.null&fecha=gte.'+iniUTC+'&fecha=lte.'+finUTC+'&select=cliente_id,total,fecha')
   ]).then(function(r){
     var ventasConCoords = r[0]||[];
     var todasVentas = r[1]||[];
@@ -2988,7 +2990,7 @@ cargarDatos();
 
     <!-- Header + filtros fecha -->
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;flex-shrink:0;">
-      <div class="sec-titulo">📍 Delivery &amp; Clients Data</div>
+      <div><div class="sec-titulo">📍 Delivery &amp; Clients Data</div><div style="font-size:12px;color:var(--gris);margin-top:2px">Solo tus envíos propios (mostrador y WhatsApp). Las plataformas no se incluyen.</div></div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;">
         <button class="btn-nuevo" onclick="setDelPeriodo('hoy')" id="del-btn-hoy">Hoy</button>
         <button class="btn-nuevo" onclick="setDelPeriodo('semana')" id="del-btn-semana">Esta semana</button>
