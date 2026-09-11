@@ -43,12 +43,11 @@ const dinero = (n: number) => "$" + (Math.round(n * 100) / 100).toLocaleString("
 const ahoraLocal = () =>
   new Date().toLocaleString("es-MX", { timeZone: TZ, weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
 
-// Tarifa de envío: la MISMA tabla del POS (km por calles, redondeado hacia arriba)
+// Tarifa de envío: la MISMA del POS. Km de la RUTA en coche (Google Maps), redondeados hacia arriba.
+// Hasta 3 km = $40 y cada km adicional +$10 (4 km $50 … 15 km $160, y así hacia arriba).
 function costoEnvio(km: number) {
-  const d = Math.ceil(km);
-  const t: Record<number, number> = { 1: 25, 2: 25, 3: 37, 4: 47, 5: 56, 6: 65, 7: 74, 8: 84, 9: 93, 10: 102, 11: 112, 12: 121, 13: 130, 14: 140, 15: 149,
-    16: 158, 17: 167, 18: 177, 19: 186, 20: 195, 21: 205, 22: 214, 23: 223, 24: 233, 25: 242, 26: 251, 27: 260, 28: 269, 29: 278, 30: 288 };
-  return t[d] ?? 288 + (d - 30) * 10;
+  const d = Math.max(3, Math.ceil(km));
+  return 40 + (d - 3) * 10;
 }
 function kmLineaRecta(lat: number, lng: number) { // respaldo del POS cuando no hay ruta
   const R = 6371, dLat = (lat - ORIGEN.lat) * Math.PI / 180, dLon = (lng - ORIGEN.lng) * Math.PI / 180;
@@ -254,7 +253,7 @@ async function cotizarEnvio(direccion: string | undefined, lat?: number, lng?: n
     dLat = r.lat; dLng = r.lng; formateada = r.direccion; lugar = r.lugar;
   }
   if (dLat == null || dLng == null) return { ok: false, error: "Necesito la dirección completa o la ubicación 📍 del cliente." };
-  let km = kmLineaRecta(dLat, dLng), metodo = "aprox";
+  let km = 0, metodo = "";
   if (GMAPS_KEY) {
     try {
       const u = `https://maps.googleapis.com/maps/api/directions/json?origin=${ORIGEN.lat},${ORIGEN.lng}&destination=${dLat},${dLng}&alternatives=true&mode=driving&key=${GMAPS_KEY}`;
@@ -263,7 +262,11 @@ async function cotizarEnvio(direccion: string | undefined, lat?: number, lng?: n
         km = Math.min(...d.routes.map((r: any) => r.legs[0].distance.value)) / 1000; metodo = "por calles";
         if (!formateada) formateada = d.routes[0].legs[0].end_address;
       }
-    } catch (_) { /* se queda la aproximación */ }
+    } catch (_) { /* sin ruta */ }
+  }
+  // El envío SIEMPRE se cobra por la ruta en calles, nunca en línea recta: si Google no da ruta, lo confirma el equipo
+  if (metodo !== "por calles") {
+    return { ok: false, error: `No pude calcular la ruta por calles hasta ${formateada || "esa dirección"}. Dile al cliente que en un momento le confirmamos el costo del envío y usa avisar_equipo (quien=cliente, tema: «Confirmar costo de envío a ${formateada || "la dirección del cliente"}»).` };
   }
   const enZona = !formateada || ZONA.test(formateada);
   return { ok: true, lugar, direccion: formateada, lat: dLat, lng: dLng, km: Math.round(km * 10) / 10, envio: costoEnvio(km), metodo, en_zona: enZona,
