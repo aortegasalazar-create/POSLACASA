@@ -287,10 +287,10 @@ function reglas(c: Awaited<ReturnType<typeof config>>, reciente: string, promosT
 
 Hoy es ${ahoraLocal()} (hora de Saltillo).
 Horario de pedidos: ${t("bot_horario") || "no lo tengo; si preguntan, di que lo confirma el equipo"}.
-Tiempo aproximado para recoger (pickup): ${t("bot_tiempo_pickup") || "lo confirma el equipo"}.
+Tiempo aproximado para recoger en tienda: ${t("bot_tiempo_pickup") || "lo confirma el equipo"}.
 Tiempo aproximado de entrega a domicilio: ${t("bot_tiempo_domicilio") || "lo confirma el equipo"}.
 Envío a todo Saltillo, Arteaga y Ramos Arizpe (el costo se calcula con cotizar_envio).
-Pago: efectivo o transferencia. Si es efectivo A DOMICILIO pregunta con cuánto paga para llevar cambio; si es pickup en efectivo paga al recoger, no preguntes con cuánto paga.
+Pago: efectivo o transferencia. Si es efectivo A DOMICILIO pregunta con cuánto paga para llevar cambio; si es para recoger en tienda y en efectivo paga al recoger, no preguntes con cuánto paga.
 Datos para transferencia: ${t("bot_transferencia") || "no los tengo; di que el equipo se los manda en un momento"}.
 ${t("bot_notas") ? "Indicaciones del dueño: " + t("bot_notas") : ""}
 
@@ -302,9 +302,9 @@ CÓMO ATIENDES
 - Para cada producto con grupos «ELIGE UNA», pregunta lo que falte (totopo, salsa, proteína, masa, guiso). Si no le importa, sugiere lo más pedido: totopo Natural, salsa Verde cremosa, proteína Pollo.
 - Los chilaquiles llevan toppings incluidos (queso, crema, frijoles, cebolla y cilantro). SIEMPRE pregunta, por cada chilaquil, si lo quiere con todo o sin alguno (ej. "¿Con todo: queso, crema, frijoles, cebolla y cilantro?"). Si no lo preguntas, el sistema no te deja cerrar el pedido.
 - Cuando haga sentido, sugiere UNA cosa extra (un refresco, un extra de proteína) sin insistir.
-- Pregunta: ¿pickup o a domicilio? Si es a domicilio pide calle, número, colonia y referencias (o su ubicación 📍) y usa cotizar_envio. Si queda fuera de zona, díselo con amabilidad y ofrece pickup.
+- Pregunta: ¿lo pasa a recoger a la tienda o se lo llevamos a domicilio? (NUNCA le digas «pickup» al cliente: mucha gente no conoce la palabra. Di «recoger en tienda». En el resumen escribe «🏪 Recoger en tienda» o «🛵 A domicilio».) Si es a domicilio pide calle, número, colonia y referencias (o su ubicación 📍) y usa cotizar_envio. Si queda fuera de zona, díselo con amabilidad y ofrece que lo pase a recoger a la tienda.
 - Nunca digas un total sin usar antes revisar_pedido.
-- CIERRE: cuando ya tengas TODO (productos con sus opciones y toppings, pickup o domicilio con dirección, forma de pago y nombre), usa revisar_pedido con todo eso y manda UN resumen final completo: cada producto con su detalle, entrega (y dirección), pago, nombre y el *total*. Termina preguntando "¿Es correcto? ¿Es todo?".
+- CIERRE: cuando ya tengas TODO (productos con sus opciones y toppings, recoger en tienda o domicilio con dirección, forma de pago y nombre), usa revisar_pedido con todo eso y manda UN resumen final completo: cada producto con su detalle, entrega (y dirección), pago, nombre y el *total*. Termina preguntando "¿Es correcto? ¿Es todo?".
 - Solo si el cliente responde a ese resumen con algo afirmativo (sí, ok, correcto, así está bien, es todo, va, dale, 👍…) usa registrar_pedido con exactamente lo mismo. Si agrega o cambia algo, vuelve a usar revisar_pedido y a confirmar. El sistema no te deja registrar sin ese resumen confirmado.
 - AGREGAR A UN PEDIDO: si el cliente ya tiene un pedido reciente (abajo) y quiere sumarle algo ("agrégame…", "también quiero…", "se me olvidó…"), NO hagas un pedido completo nuevo ni repitas lo que ya pidió. Usa revisar_pedido y registrar_pedido con agregar_a=<folio> y en items SOLO lo nuevo. Resumen corto: "Agregamos a tu pedido #N: … Nuevo total: *$X*. ¿Es correcto?". Si es efectivo a domicilio, confirma con cuánto paga ahora. Si el sistema dice que ese pedido ya salió, díselo y ofrécele hacerlo como pedido nuevo (con su propio envío).
 - Ya registrado, dale su número de pedido y, si paga con transferencia, pídele que mande aquí la foto del comprobante.
@@ -552,7 +552,7 @@ async function herramienta(nombre: string, input: any, ctx: { tel: string; nombr
       await sb.from("wa_chats").update({ contexto: ctx.contexto }).eq("telefono", ctx.tel);
       return { ok: true, lineas: resumen, subtotal: v.subtotal, descuento: pr.descuento, envio, total,
         siguiente: completo ? "Manda el resumen final completo y pregunta si es correcto y si es todo. Registra solo cuando conteste que sí."
-          : "Todavía falta " + [!input.entrega && "pickup o domicilio", !input.pago && "forma de pago"].filter(Boolean).join(" y ") + " para el resumen final." };
+          : "Todavía falta " + [!input.entrega && "si es para recoger en tienda o a domicilio", !input.pago && "forma de pago"].filter(Boolean).join(" y ") + " para el resumen final." };
     }
     const rev = ctx.contexto.revision;
     if (!rev || rev.firma !== firma) {
