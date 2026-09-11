@@ -4537,6 +4537,26 @@ function waCargarPedidos(){
   else q += '&creado=gte.' + waHoyUTC();
   if (!waVerSim) q += '&telefono=neq.SIMULADOR';
   sbFetch(q).then(function(r){
+    var padres = r.filter(function(p){ return p.pedido_padre; }).map(function(p){ return p.pedido_padre; })
+      .filter(function(x, i, a){ return a.indexOf(x) === i; });
+    if (!padres.length) return r;
+    return Promise.all([
+      sbFetch('wa_pedidos?id=in.(' + padres.join(',') + ')&select=id,items,total'),
+      sbFetch('wa_pedidos?pedido_padre=in.(' + padres.join(',') + ')&estado=neq.rechazado&select=id,pedido_padre,items,total')
+    ]).then(function(x){
+      window._waBase = {};
+      r.forEach(function(p){
+        if (!p.pedido_padre) return;
+        var padre = x[0].find(function(o){ return o.id === p.pedido_padre; }) || {items: [], total: 0};
+        var antes = x[1].filter(function(h){ return h.pedido_padre === p.pedido_padre && h.id < p.id; });
+        window._waBase[p.id] = {
+          items: (padre.items || []).concat([].concat.apply([], antes.map(function(h){ return h.items || []; }))),
+          total: Number(padre.total || 0) + antes.reduce(function(s2, h){ return s2 + Number(h.total || 0); }, 0)
+        };
+      });
+      return r;
+    });
+  }).then(function(r){
     var cont = document.getElementById('wa-pedidos');
     if (!r.length) {
       cont.innerHTML = '<div class="wa-vacio">' + (waFil === 'nuevo' ? 'No hay pedidos por atender. Cuando entre uno suena una alerta y aparece aquí.' : 'Sin pedidos en esta vista.') + '</div>';
@@ -4551,6 +4571,12 @@ function waTarjeta(p){
   var estados = {nuevo: ['Por atender', '#22b573'], aceptado: ['En preparación', '#3b82f6'], listo: [dom ? 'En camino' : 'Listo', '#7fb0ff'], rechazado: ['Rechazado', '#ef5350']};
   var es = estados[p.estado] || [p.estado, '#8fa3c8'];
   var pill = function(txt, c){ return '<span class="orp-pill" style="background:' + c + '22;color:' + c + ';border:1px solid ' + c + '66">' + txt + '</span>'; };
+  var lineaHtml = function(l, gris){
+    return '<div class="wa-it"' + (gris ? ' style="opacity:.55"' : '') + '><div>' + l.cantidad + '× <b>' + waEsc(l.nombre) + '</b>' +
+      (l.detalle ? '<small>' + waEsc(l.detalle) + '</small>' : '') + (l.nota ? '<small>📝 ' + waEsc(l.nota) + '</small>' : '') +
+      '</div><div class="num">' + waDinero(l.importe) + '</div></div>';
+  };
+  var base = p.pedido_padre && window._waBase ? window._waBase[p.id] : null;
   var items = (p.items || []).map(function(l){
     return '<div class="wa-it"><div>' + l.cantidad + '× <b>' + waEsc(l.nombre) + '</b>' +
       (l.detalle ? '<small>' + waEsc(l.detalle) + '</small>' : '') + (l.nota ? '<small>📝 ' + waEsc(l.nota) + '</small>' : '') +
@@ -4558,7 +4584,11 @@ function waTarjeta(p){
   }).join('');
   var pago;
   if (p.pago === 'transferencia') pago = p.pagado ? pill('🏦 Transferencia · pagado', '#22b573') : pill('🏦 Transferencia · falta comprobante', '#f59e0b');
-  else pago = pill('💵 Efectivo' + (p.paga_con ? ' · paga con ' + waDinero(p.paga_con) + ' → cambio ' + waDinero(p.paga_con - p.total) : ''), '#8fa3c8');
+  else {
+    var b0 = p.pedido_padre && window._waBase ? window._waBase[p.id] : null;
+    var totRef = b0 ? b0.total + Number(p.total) : Number(p.total); // el cambio se calcula sobre el pedido completo
+    pago = pill('💵 Efectivo' + (p.paga_con ? ' · paga con ' + waDinero(p.paga_con) + ' → cambio ' + waDinero(p.paga_con - totRef) : ''), '#8fa3c8');
+  }
   var dir = '';
   if (dom) {
     var mapa = p.lat && p.lng ? 'https://www.google.com/maps?q=' + p.lat + ',' + p.lng : (p.direccion ? 'https://www.google.com/maps/search/' + encodeURIComponent(p.direccion) : '');
@@ -4568,10 +4598,11 @@ function waTarjeta(p){
   var notas = p.notas ? '<div class="wa-dir">📝 ' + waEsc(p.notas) + '</div>' : '';
   var ocup = waOcupado[p.id] ? ' disabled' : '';
   var acc = '';
+  var amp = !!p.pedido_padre;
   if (p.estado === 'nuevo') {
-    acc = '<button class="orp-btn lleno"' + ocup + ' onclick="waAceptar(' + p.id + ')">✓ Aceptar y cobrar</button>' +
+    acc = '<button class="orp-btn lleno"' + ocup + ' onclick="waAceptar(' + p.id + ')">' + (amp ? '✓ Aceptar y cobrar lo agregado' : '✓ Aceptar y cobrar') + '</button>' +
       '<button class="orp-btn wa-btn-no"' + ocup + ' onclick="waRechazar(' + p.id + ')">Rechazar</button>';
-  } else if (p.estado === 'aceptado') {
+  } else if (p.estado === 'aceptado' && !amp) {
     acc = '<button class="orp-btn lleno"' + ocup + ' onclick="waListo(' + p.id + ')">' + (dom ? '🛵 Ya salió' : '🥡 Ya está listo') + '</button>';
   }
   if (p.pago === 'transferencia' && p.estado !== 'rechazado') {
@@ -4579,14 +4610,23 @@ function waTarjeta(p){
   }
   acc += '<button class="orp-btn" onclick="waAbrirChat(\'' + waEsc(p.telefono) + '\')">Ver chat</button>';
   return '<div class="wa-ped ' + waEsc(p.estado) + '">' +
-    '<div class="wa-ped-h"><div><div class="wa-ped-f">#' + p.id + ' · ' + waEsc(p.nombre || 'Sin nombre') + '</div>' +
+    '<div class="wa-ped-h"><div><div class="wa-ped-f">' + (amp ? '➕ Agregado al pedido #' + p.pedido_padre : '#' + p.id) + ' · ' + waEsc(p.nombre || 'Sin nombre') + '</div>' +
     '<div class="wa-ped-c">' + waTel(p.telefono) + ' · ' + waCuando(p.creado) + (p.venta_id ? ' · venta #' + p.venta_id : '') + '</div></div>' +
-    '<div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end">' + pill(es[0], es[1]) + (p.simulado ? pill('Prueba', '#8fa3c8') : '') + '</div></div>' +
+    '<div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end">' + pill(es[0], es[1]) + (amp ? pill('Solo lo nuevo', '#f59e0b') : '') + (p.simulado ? pill('Prueba', '#8fa3c8') : '') + '</div></div>' +
     '<div class="orp-chips">' + pill(dom ? '🛵 A domicilio' : '🥡 Pasa a recoger', dom ? '#7fb0ff' : '#c4b5fd') + pago + '</div>' +
-    dir + '<div class="wa-ped-items">' + items + '</div>' +
+    dir + (base
+      ? '<div class="wa-ped-items"><div class="orp-cs" style="text-transform:uppercase;letter-spacing:.5px">Ya estaba en el pedido #' + p.pedido_padre + ' (ya cobrado)</div>' +
+        (base.items || []).map(function(l){ return lineaHtml(l, true); }).join('') +
+        '<div class="orp-cs" style="text-transform:uppercase;letter-spacing:.5px;color:#fbbf24;margin-top:6px">➕ Nuevo — preparar y agregar</div>' +
+        (p.items || []).map(function(l){ return lineaHtml(l, false); }).join('') + '</div>' +
+        '<div class="wa-tot"><span>Total del pedido completo</span><span>' + waDinero(base.total + Number(p.total)) + '</span></div>' +
+        '<div class="wa-tot g"><span>Por cobrar ahora</span><span>' + waDinero(p.total) + '</span></div>' + notas +
+        '<div class="wa-acc">' + acc + '</div></div>'
+      : '') +
+    (base ? '' : '<div class="wa-ped-items">' + items + '</div>' +
     (p.envio ? '<div class="wa-tot"><span>Subtotal</span><span>' + waDinero(p.subtotal) + '</span></div><div class="wa-tot"><span>Envío</span><span>' + waDinero(p.envio) + '</span></div>' : '') +
     '<div class="wa-tot g"><span>Total</span><span>' + waDinero(p.total) + '</span></div>' + notas +
-    '<div class="wa-acc">' + acc + '</div></div>';
+    '<div class="wa-acc">' + acc + '</div></div>');
 }
 
 // La nota del renglón con el mismo formato que usa la pantalla de Venta (para reportes de toppings)
@@ -4617,7 +4657,7 @@ function waAceptar(id){
     ped = r[0];
     if (ped.simulado) { ped.venta_id = null; return null; } // prueba: no se cobra ni descuenta inventario
     var dom = ped.entrega === 'domicilio';
-    var notas = '📱 WhatsApp #' + ped.id + ' · ' + (ped.nombre || '') + ' · ' + waTel(ped.telefono) +
+    var notas = '📱 WhatsApp #' + ped.id + (ped.pedido_padre ? ' (agregado al #' + ped.pedido_padre + ')' : '') + ' · ' + (ped.nombre || '') + ' · ' + waTel(ped.telefono) +
       (ped.paga_con ? ' · Paga con ' + waDinero(ped.paga_con) : '') + (ped.referencias ? ' · Ref: ' + ped.referencias : '') + (ped.notas ? ' · ' + ped.notas : '');
     return sbFetch('ventas', 'POST', {subtotal: Number(ped.subtotal), descuento: 0, costo_envio: Number(ped.envio || 0), total: Number(ped.total),
       metodo_pago: ped.pago, tipo_servicio: dom ? 'delivery' : 'para_llevar', canal: dom ? 'delivery_propio' : 'local',
@@ -4661,6 +4701,8 @@ function waListo(id){
   if (waOcupado[id]) return; waOcupado[id] = true; waCargarPedidos();
   waSb('wa_pedidos?id=eq.' + id + '&estado=eq.aceptado', 'PATCH', {estado: 'listo', actualizado: new Date().toISOString()}).then(function(r){
     if (!r.length) return;
+    // lo que el cliente agregó después sale junto con el pedido
+    sbFetch('wa_pedidos?pedido_padre=eq.' + id + '&estado=eq.aceptado', 'PATCH', {estado: 'listo', actualizado: new Date().toISOString()}).catch(function(){});
     toast('Le avisamos al cliente del pedido #' + id);
     return waFn({accion: 'aviso', pedido_id: id, tipo: 'listo'});
   }).catch(function(e){ toast(String(e.message || e).slice(0, 140), true); })
