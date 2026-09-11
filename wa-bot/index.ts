@@ -305,6 +305,16 @@ const TOOLS = [
     }, required: ["items"] },
   },
   {
+    name: "avisar_equipo",
+    description: "Manda una alerta al POS para que el equipo de la cocina resuelva algo, y el bot deja de contestar este chat para que lo atienda una persona. Úsala SIEMPRE que quien escribe sea un REPARTIDOR (nuestro o de Rappi, DiDi o Uber), con cualquier tema. También cuando un CLIENTE avisa algo de un pedido que ya hizo: ya llegó a la tienda por él, no le ha llegado, llegó incompleto o mal.",
+    input_schema: { type: "object", properties: {
+      quien: { type: "string", enum: ["repartidor", "cliente"] },
+      tema: { type: "string", description: "Resumen corto y claro para el equipo, ej. «El repartidor está en el domicilio del pedido #12 y el cliente no sale ni contesta»" },
+      pedido: { type: "integer", description: "Folio del pedido si lo mencionan o lo sabes" },
+      plataforma: { type: "string", enum: ["propio", "rappi", "didi", "uber", "no se sabe"], description: "De qué canal es el pedido del que habla" },
+    }, required: ["quien", "tema"] },
+  },
+  {
     name: "pasar_a_humano",
     description: "Pasa la conversación al equipo: quejas, algo que no está en el menú, pedidos grandes o para evento, facturas, dudas que no sabes, o si el cliente pide hablar con una persona.",
     input_schema: { type: "object", properties: { motivo: { type: "string" } }, required: ["motivo"] },
@@ -324,6 +334,13 @@ Pago: efectivo o transferencia. Si es efectivo A DOMICILIO pregunta con cuánto 
 Datos para transferencia: ${t("bot_transferencia") || "no los tengo; di que el equipo se los manda en un momento"}.
 ${t("bot_notas") ? "Indicaciones del dueño: " + t("bot_notas") : ""}
 
+QUIÉN TE ESCRIBE
+- A este número escriben CLIENTES y también REPARTIDORES (los nuestros o de Rappi, DiDi o Uber) para avisar algo de una entrega. NUNCA preguntes si es cliente o repartidor ni des opciones tipo "¿vas a pedir o eres repartidor?". Dedúcelo por lo que escribe.
+- Es REPARTIDOR si habla como quien LLEVA o RECOGE un pedido: "el cliente no sale", "no contesta", "ya estoy en el domicilio", "no encuentro la dirección", "vengo por el pedido de Rappi/DiDi/Uber", "¿a nombre de quién?", "no traigo cambio", "voy en camino", un código o número de orden de plataforma, etc. Entonces usa avisar_equipo (quien=repartidor) con un resumen claro y contesta MUY breve, por ejemplo: "Enterado 👍 ya le aviso al equipo para que lo resuelva." Si no sabes de qué pedido habla, en esa misma respuesta pídele el número de pedido o el nombre del cliente. A un repartidor no le ofrezcas el menú ni le tomes pedido.
+- Un CLIENTE que dice "ya llegué" o "estoy afuera" normalmente viene a recoger SU pedido a la tienda (revisa si tiene pedido reciente para recoger): es cliente. Usa avisar_equipo (quien=cliente) y dile que enseguida se lo entregan.
+- Si un cliente avisa un problema con un pedido que ya hizo (no llega, llegó incompleto o mal), usa avisar_equipo (quien=cliente) y dile que el equipo lo revisa en un momento.
+- Si todavía no se puede saber (solo "hola", "buenas tardes"), saluda natural y pregunta en qué le puedes ayudar, sin dar por hecho que va a pedir. Con su siguiente mensaje sabrás quién es.
+
 CÓMO ATIENDES
 - Escribe como en WhatsApp: corto, cálido, natural, español de México. Nada de párrafos largos ni listas enormes. En WhatsApp las negritas llevan UN solo asterisco (*así*), nunca dos. Úsalas solo para el resumen y el total. Uno o dos emojis como mucho.
 - Pide solo lo que falta, en una sola pregunta cuando se pueda. No repitas lo que el cliente ya dijo ni le enlistes los toppings incluidos.
@@ -339,7 +356,7 @@ CÓMO ATIENDES
 - AGREGAR A UN PEDIDO: si el cliente ya tiene un pedido reciente (abajo) y quiere sumarle algo ("agrégame…", "también quiero…", "se me olvidó…"), NO hagas un pedido completo nuevo ni repitas lo que ya pidió. Usa revisar_pedido y registrar_pedido con agregar_a=<folio> y en items SOLO lo nuevo. Resumen corto: "Agregamos a tu pedido #N: … Nuevo total: *$X*. ¿Es correcto?". Si es efectivo a domicilio, confirma con cuánto paga ahora. Si el sistema dice que ese pedido ya salió, díselo y ofrécele hacerlo como pedido nuevo (con su propio envío).
 - Ya registrado, dale su número de pedido y, si paga con transferencia, pídele que mande aquí la foto del comprobante.
 - Si algo no está claro o no lo sabes, pregunta o usa pasar_a_humano. Nunca prometas algo que no está aquí.
-- Si te escriben algo que no tiene que ver con pedidos, contesta breve y amable y regresa al pedido.
+- Si te escriben algo que no tiene que ver con pedidos, contesta breve y amable y, si es cliente, regresa al pedido.
 
 ${promosTxt ? "PROMOCIONES VIGENTES (se aplican solas en revisar_pedido; no inventes otras):\n" + promosTxt + "\n- OBLIGATORIO: si el pedido ya trae parte de un combo pero le falta lo demás (ej. pidió chilaquiles grandes y no lleva Coca), en el mensaje donde muestras el resumen agrega ANTES de preguntar si es correcto una línea como: «🎁 Si le agregas una Coca queda en combo y solo pagas $X más (ahorras $Y)». X = precio normal de lo que falta − ahorro del combo. Solo una vez por pedido; si dice que no, no insistas.\n- En el resumen muestra cada promoción aplicada con su descuento, como te la regresa revisar_pedido.\n" : ""}${reciente ? "PEDIDO RECIENTE DE ESTE CLIENTE:\n" + reciente + "\n" : ""}
 MENÚ (ids entre corchetes; los precios son exactos):`;
@@ -608,13 +625,49 @@ async function herramienta(nombre: string, input: any, ctx: { tel: string; nombr
     await sb.from("wa_chats").update({ nombre: fila.nombre, contexto: ctx.contexto }).eq("telefono", ctx.tel);
     return { ok: true, folio: data.id, total, envio, subtotal: v.subtotal, lineas: resumen };
   }
+  if (nombre === "avisar_equipo") {
+    await crearAviso(ctx.tel, ctx.nombre, { quien: input.quien === "repartidor" ? "repartidor" : "cliente", tema: input.tema, pedido: input.pedido, plataforma: input.plataforma }, ctx.contexto);
+    return { ok: true, nota: input.quien === "repartidor"
+      ? "Listo, el equipo ya tiene la alerta. Contéstale al repartidor muy breve que ya le avisaste al equipo (y pide el número de pedido o nombre del cliente si no lo sabes)."
+      : "Listo, el equipo ya tiene la alerta. Dile al cliente que en un momento lo atienden." };
+  }
   if (nombre === "pasar_a_humano") {
-    const hasta = new Date(Date.now() + 2 * 3600 * 1000).toISOString();
-    await sb.from("wa_chats").update({ modo: "equipo", pausado_hasta: hasta }).eq("telefono", ctx.tel);
-    await sb.from("wa_mensajes").insert({ telefono: ctx.tel, rol: "sistema", texto: "Pasado al equipo: " + (input.motivo ?? "") });
+    await crearAviso(ctx.tel, ctx.nombre, { quien: "cliente", tema: "Pide atención de una persona: " + (input.motivo ?? "") }, ctx.contexto);
     return { ok: true, nota: "Dile al cliente que en un momento lo atiende alguien del equipo." };
   }
   return { ok: false, error: "herramienta desconocida" };
+}
+
+// ---------- avisos al equipo (repartidores y clientes con un tema que resolver) ----------
+// La alerta vive en wa_chats.contexto.aviso; el POS la muestra, suena y el equipo le da «Enterado».
+// El chat pasa al equipo 2 h para que el bot no se meta mientras lo resuelven.
+async function crearAviso(tel: string, nombre: string, a: { quien: string; tema: string; pedido?: number | null; plataforma?: string }, contexto?: any) {
+  let ctxChat = contexto;
+  let nomChat: string | null = null;
+  if (!ctxChat) {
+    const { data: chat } = await sb.from("wa_chats").select("contexto,nombre").eq("telefono", tel).maybeSingle();
+    ctxChat = { ...(chat?.contexto ?? {}) };
+    nomChat = chat?.nombre ?? null;
+  }
+  let pedido: any = null;
+  if (a.pedido) {
+    const { data: p } = await sb.from("wa_pedidos").select("id,nombre,telefono,direccion,entrega,estado").eq("id", Number(a.pedido)).maybeSingle();
+    pedido = p ? { id: p.id, cliente: p.nombre, tel: p.telefono, direccion: p.direccion, entrega: p.entrega, estado: p.estado } : { id: Number(a.pedido) };
+  }
+  const previo = ctxChat.aviso;
+  const reciente = previo?.estado === "pendiente" && Date.now() - new Date(previo.creado).getTime() < 10 * 60 * 1000;
+  const tema = unaLinea(a.tema, 240);
+  ctxChat.aviso = {
+    estado: "pendiente", quien: a.quien, plataforma: a.plataforma ?? previo?.plataforma ?? null,
+    tema: reciente && previo.tema && !previo.tema.includes(tema) ? unaLinea(previo.tema + " / " + tema, 400) : tema,
+    pedido: pedido ?? (reciente ? previo.pedido : null), creado: reciente ? previo.creado : new Date().toISOString(),
+  };
+  const base = nombre || nomChat || "";
+  const fila: Record<string, unknown> = { telefono: tel, contexto: ctxChat, modo: "equipo", pausado_hasta: new Date(Date.now() + 2 * 3600 * 1000).toISOString(), ultimo_mensaje: new Date().toISOString() };
+  if (a.quien === "repartidor" && !/repartidor/i.test(base)) fila.nombre = (base ? base + " " : "") + "(repartidor)";
+  await sb.from("wa_chats").upsert(fila);
+  await sb.from("wa_mensajes").insert({ telefono: tel, rol: "sistema", texto: `⚠️ Aviso al equipo (${a.quien}): ${tema}` });
+  return { nuevo: !reciente };
 }
 
 // ---------- traducir lo que manda WhatsApp ----------
@@ -873,8 +926,19 @@ async function mensajeRepartidor(tel: string, texto: string, payload: string | n
   // Texto libre sin oferta pendiente: si también es número de prueba, lo atiende el bot de pedidos
   if (!m && (acepta === null || !ofertas?.length)) {
     if (probadores.includes(diez(tel))) return false;
-    await sb.from("wa_mensajes").insert({ telefono: tel, rol: "cliente", texto, wa_id: waId });
+    const ins0 = await sb.from("wa_mensajes").insert({ telefono: tel, rol: "cliente", texto, wa_id: waId });
+    if (ins0.error) return true; // repetido
     await sb.from("wa_chats").upsert({ telefono: tel, nombre: `${rep.nombre} (repartidor)`, ultimo_mensaje: new Date().toISOString(), modo: "equipo" });
+    // «ok», «gracias», «👍»: no hace falta molestar al equipo
+    const t = texto.trim().toLowerCase();
+    if (!t || /^(ok|oki|okey|va|sale|listo|gracias|grax|enterado|perfecto|de acuerdo|👍|🙏|👌|✅)[\s!.,👍🙏]*$/u.test(t)) return true;
+    // su pedido en curso, para que el equipo sepa de qué cliente habla
+    const desde = new Date(Date.now() - 12 * 3600 * 1000).toISOString();
+    const { data: suyo } = await sb.from("wa_pedidos").select("id").eq("repartidor_id", rep.id).eq("reparto_estado", "asignado")
+      .gte("creado", desde).order("id", { ascending: false }).limit(1);
+    const tema = /^\[/.test(texto) ? texto : `${rep.nombre.split(/\s+/)[0]}: «${texto}»`;
+    const r = await crearAviso(tel, `${rep.nombre} (repartidor)`, { quien: "repartidor", tema, pedido: suyo?.[0]?.id ?? null, plataforma: "propio" });
+    if (r.nuevo) await textoRepartidor(rep, "Enterado 👍 ya le avisé al equipo para que lo resuelva.");
     return true;
   }
   const ins = await sb.from("wa_mensajes").insert({ telefono: tel, rol: "cliente", texto, wa_id: waId });
