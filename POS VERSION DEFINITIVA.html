@@ -36,6 +36,8 @@
 .wa-alerta{position:fixed;left:50%;transform:translateX(-50%);top:76px;z-index:9000;background:#16a34a;color:#fff;border-radius:16px;padding:14px 20px;display:flex;gap:16px;align-items:center;font-size:15px;box-shadow:0 12px 36px rgba(0,0,0,.45);cursor:pointer;animation:waLatido 1.6s ease-in-out infinite;max-width:calc(100vw - 32px);}
 .wa-alerta[hidden]{display:none!important;}
 .rep-alerta{top:auto;bottom:24px;background:#1d4ed8;animation:none;}
+.wa-sonido{position:fixed;left:16px;bottom:16px;z-index:9001;background:#78350f;color:#fde68a;border:1px solid #f59e0b;border-radius:12px;padding:10px 14px;font-size:13px;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,.4);max-width:calc(100vw - 32px);}
+.wa-sonido[hidden]{display:none!important;}
 .av-alerta{top:140px;background:#ea580c;flex-direction:column;align-items:stretch;gap:8px;}
 .av-alerta .av-f{display:flex;gap:14px;align-items:center;justify-content:space-between;}
 .wa-alerta.av-alerta span{color:#c2410c;}
@@ -3121,6 +3123,7 @@ cargarDatos();
 <div id="wa-alerta" class="wa-alerta" hidden onclick="waIrAlerta()"></div>
 <div id="rep-alerta" class="wa-alerta rep-alerta" hidden onclick="repIrAlerta()"></div>
 <div id="av-alerta" class="wa-alerta av-alerta" hidden></div>
+<div id="wa-sonido" class="wa-sonido" hidden onclick="waSonidoActivar()">🔇 Sonido de pedidos apagado · <b>toca aquí para activarlo</b></div>
 <div class="vista" id="vista-whatsapp">
   <div class="orp-page">
     <div class="orp-top">
@@ -4556,7 +4559,7 @@ function waAudioCtx(){
   } catch (e) {}
   return waAudio;
 }
-['click', 'keydown', 'touchstart'].forEach(function(ev){ document.addEventListener(ev, waAudioCtx, {once: true, capture: true}); });
+['click', 'keydown', 'touchstart'].forEach(function(ev){ document.addEventListener(ev, function(){ waAudioCtx(); setTimeout(waSonidoRevisar, 300); }, {once: true, capture: true}); });
 function waSonar(){
   var ctx = waAudioCtx(); if (!ctx) return;
   // Timbre tipo tablet de plataforma: dos rondas de tres notas
@@ -4570,8 +4573,35 @@ function waSonar(){
     o.connect(g); g.connect(ctx.destination); o.start(t0); o.stop(t0 + 0.18);
   });
 }
+// Alarma urgente (nadie aceptó llevar un pedido): pulsos graves-agudos, distinta al timbre de pedido nuevo
+function waAlarma(){
+  var ctx = waAudioCtx(); if (!ctx) return;
+  for (var k = 0; k < 6; k++) {
+    var o = ctx.createOscillator(), g = ctx.createGain(), t0 = ctx.currentTime + k * 0.32;
+    o.type = 'square'; o.frequency.value = k % 2 ? 523 : 784;
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(0.35, t0 + 0.02);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.28);
+    o.connect(g); g.connect(ctx.destination); o.start(t0); o.stop(t0 + 0.3);
+  }
+}
+// Aviso suave (un repartidor aceptó): una sola nota
+function waPing(){
+  var ctx = waAudioCtx(); if (!ctx) return;
+  var o = ctx.createOscillator(), g = ctx.createGain(), t0 = ctx.currentTime;
+  o.type = 'sine'; o.frequency.value = 1319;
+  g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.5, t0 + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.5);
+  o.connect(g); g.connect(ctx.destination); o.start(t0); o.stop(t0 + 0.55);
+}
+// El navegador no deja sonar hasta que alguien toque la pantalla: si el sonido está bloqueado, se avisa
+function waSonidoRevisar(){
+  var el = document.getElementById('wa-sonido'); if (!el) return;
+  el.hidden = !!(waAudio && waAudio.state === 'running');
+}
+function waSonidoActivar(){ waAudioCtx(); waSonar(); setTimeout(waSonidoRevisar, 400); }
 var waUltimoSonido = 0;
 function waRevisar(){
+  waSonidoRevisar();
   // Pedidos cerrados por el bot que nadie ha aceptado (los del simulador del POS no cuentan)
   sbFetch('wa_pedidos?estado=eq.nuevo&telefono=neq.SIMULADOR&select=id,nombre,total&order=id.desc&limit=50').then(function(r){
     var b = document.getElementById('wa-badge');
@@ -5228,15 +5258,18 @@ function repManual(id, repId){
 }
 
 // Alerta: «Juan va por el pedido #12» o «Nadie aceptó el #12». Suena y se queda hasta que le dan Enterado.
-var repYaSono = {};
+var repYaSono = {}, repUltimaAlarma = 0;
 function repRevisar(){
   sbFetch('wa_pedidos?reparto_avisado=eq.false&reparto_estado=in.(asignado,sin_repartidor)&select=id,reparto_estado,repartidor_nombre,reparto_intentos&order=id').then(function(r){
     var el = document.getElementById('rep-alerta');
     if (!r.length) { el.hidden = true; return; }
-    var nuevo = r.some(function(p){ return !repYaSono[p.id + p.reparto_estado]; });
+    var nuevoMalo = r.some(function(p){ return p.reparto_estado === 'sin_repartidor' && !repYaSono[p.id + p.reparto_estado]; });
+    var nuevoBueno = r.some(function(p){ return p.reparto_estado === 'asignado' && !repYaSono[p.id + p.reparto_estado]; });
     r.forEach(function(p){ repYaSono[p.id + p.reparto_estado] = 1; });
-    if (nuevo) waSonar();
     var malo = r.some(function(p){ return p.reparto_estado === 'sin_repartidor'; });
+    // Nadie aceptó: alarma y se repite cada 30 s hasta que le den Enterado o lo asignen a mano
+    if (malo && (nuevoMalo || Date.now() - repUltimaAlarma > 29000)) { waAlarma(); repUltimaAlarma = Date.now(); }
+    else if (nuevoBueno) waPing();
     el.className = 'wa-alerta rep-alerta' + (malo ? ' malo' : '');
     el.innerHTML = '<div>' + r.map(function(p){
       return p.reparto_estado === 'asignado' ? '🛵 <b>' + waEsc(p.repartidor_nombre || 'Un repartidor') + '</b> va por el pedido <b>#' + p.id + '</b>'
