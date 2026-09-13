@@ -36,11 +36,6 @@
 .wa-alerta{position:fixed;left:50%;transform:translateX(-50%);top:76px;z-index:9000;background:#16a34a;color:#fff;border-radius:16px;padding:14px 20px;display:flex;gap:16px;align-items:center;font-size:15px;box-shadow:0 12px 36px rgba(0,0,0,.45);cursor:pointer;animation:waLatido 1.6s ease-in-out infinite;max-width:calc(100vw - 32px);}
 .wa-alerta[hidden]{display:none!important;}
 .rep-alerta{top:auto;bottom:24px;background:#1d4ed8;animation:none;}
-.wa-sonido{position:fixed;left:16px;bottom:16px;z-index:9001;background:#78350f;color:#fde68a;border:1px solid #f59e0b;border-radius:12px;padding:10px 14px;font-size:13px;cursor:pointer;box-shadow:0 8px 24px rgba(0,0,0,.4);max-width:calc(100vw - 32px);}
-.wa-sonido[hidden]{display:none!important;}
-.av-alerta{top:140px;background:#ea580c;flex-direction:column;align-items:stretch;gap:8px;}
-.av-alerta .av-f{display:flex;gap:14px;align-items:center;justify-content:space-between;}
-.wa-alerta.av-alerta span{color:#c2410c;}
 .rep-alerta.malo{background:#dc2626;animation:waLatido 1.6s ease-in-out infinite;}
 .rep-alerta span{color:#1d4ed8;}
 .rep-alerta.malo span{color:#b91c1c;}
@@ -48,6 +43,13 @@
 .rep-fila{display:grid;grid-template-columns:28px minmax(120px,1fr) minmax(140px,1fr) auto auto auto auto;gap:8px;align-items:center;margin-bottom:8px;}
 .rep-fila.nuevo{grid-template-columns:28px minmax(120px,1fr) minmax(140px,1fr) auto;}
 .rep-fila.off{opacity:.55;}
+.hor-grid{display:flex;flex-direction:column;gap:6px;margin-top:10px;max-width:480px;}
+.hor-fila{display:grid;grid-template-columns:140px 130px 14px 130px;gap:10px;align-items:center;}
+.hor-fila .hor-a{grid-column:2;}
+.hor-fila .hor-sep{color:var(--gris);font-size:12px;text-align:center;}
+.hor-fila.off .orp-inp{opacity:.4;}
+.hor-fila .orp-inp{width:130px;}
+@media(max-width:720px){.hor-fila{grid-template-columns:1fr 14px 1fr;}.hor-fila .wa-check{grid-column:1/-1;}.hor-fila .hor-a{grid-column:1;}.hor-fila .orp-inp{width:100%;box-sizing:border-box;}}
 .rep-fila>*{min-width:0;}
 .rep-fila input.orp-inp{width:100%;box-sizing:border-box;}
 @media(max-width:720px){.rep-alerta{width:calc(100vw - 32px);}}
@@ -102,6 +104,8 @@
 .wa-sw input{width:20px;height:20px;accent-color:#22b573;}
 </style>
 <script src="https://maps.googleapis.com/maps/api/js?key=AIzaSyAQSfBp29rK_P9iVLmYb0o-IKLIfJY4a3k&libraries=places&language=es" async defer></script>
+<!-- heatmap.js: libreria independiente (no de Google) para el mapa de calor, ya que Google elimino su HeatmapLayer nativo -->
+<script src="https://cdn.jsdelivr.net/npm/heatmap.js@2.0.5/build/heatmap.min.js"></script>
 <style>
 :root { --orp:#192d5b; --rojo:#2f6fed; --rojo2:#ef5350; --cafe:#0b1630; --cafe2:#13244a; --cafe3:#233a6b; --crema:#eef3fb; --dorado:#7fb0ff; --verde:#22b573; --azul:#3b82f6; --gris:#8fa3c8; }
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
@@ -1268,11 +1272,10 @@ var DELIVERY_ORIGEN_LAT = 25.430350727101576, DELIVERY_ORIGEN_LNG = -100.9839000
 var deliveryService = null;
 var deliverySessionToken = null;
 
-// Tarifa de envío (sep 2026): km de la RUTA en coche (Google Maps), redondeados hacia arriba.
-// Hasta 3 km = $40 y cada km adicional +$10 (4 km $50 … 15 km $160, y así hacia arriba).
 function obtenerCostoEnvio(distKm) {
-  var d = Math.max(3, Math.ceil(distKm));
-  return 40 + (d - 3) * 10;
+  var d = Math.ceil(distKm);
+  var tarifas = {1:25,2:25,3:37,4:47,5:56,6:65,7:74,8:84,9:93,10:102,11:112,12:121,13:130,14:140,15:149,16:158,17:167,18:177,19:186,20:195,21:205,22:214,23:223,24:233,25:242,26:251,27:260,28:269,29:278,30:288};
+  return tarifas[d] || (288 + (d - 30) * 10);
 }
 
 function initDeliverySearch() {
@@ -2724,91 +2727,20 @@ function renderDeliveryKPIs(ventas) {
   document.getElementById('del-recurrentes').textContent = recurrentes;
 }
 
-// Mapa de calor propio, anclado al mapa: se redibuja con cada zoom o movimiento
-// (el plugin heatmap.js para Google Maps se quedaba fijo en pantalla y se desfasaba).
-var _HeatOverlayClass = null;
-function getHeatOverlayClass() {
-  if (_HeatOverlayClass) return _HeatOverlayClass;
-  var GRAD = [[0.0,[127,176,255,0]],[0.2,[127,176,255,0.35]],[0.45,[127,176,255,0.7]],[0.7,[47,111,237,0.85]],[1.0,[255,50,50,1]]];
-  var PAL = new Uint8ClampedArray(256*4);
-  for (var i = 0; i < 256; i++) {
-    var t = i/255, k = 1;
-    while (k < GRAD.length-1 && t > GRAD[k][0]) k++;
-    var g0 = GRAD[k-1], g1 = GRAD[k], f = (t-g0[0])/((g1[0]-g0[0])||1);
-    for (var c = 0; c < 4; c++) {
-      var v = g0[1][c] + (g1[1][c]-g0[1][c])*f;
-      PAL[i*4+c] = c < 3 ? v : v*255*0.85;
-    }
-  }
-  function HeatOverlay(points, opts) {
-    this.points = points || [];
-    this.opts = opts || {};
-    this.div = null; this.canvas = null; this._ls = [];
-  }
-  HeatOverlay.prototype = new google.maps.OverlayView();
-  HeatOverlay.prototype.onAdd = function() {
-    var div = document.createElement('div');
-    div.style.position = 'absolute'; div.style.pointerEvents = 'none';
-    var cv = document.createElement('canvas');
-    cv.style.position = 'absolute'; cv.style.left = '0'; cv.style.top = '0';
-    div.appendChild(cv);
-    this.div = div; this.canvas = cv;
-    this.getPanes().overlayLayer.appendChild(div);
-    var self = this;
-    this._ls.push(this.getMap().addListener('idle', function(){ self.draw(); }));
-  };
-  HeatOverlay.prototype.onRemove = function() {
-    this._ls.forEach(function(l){ google.maps.event.removeListener(l); });
-    this._ls = [];
-    if (this.div && this.div.parentNode) this.div.parentNode.removeChild(this.div);
-    this.div = null; this.canvas = null;
-  };
-  HeatOverlay.prototype.setData = function(points) { this.points = points || []; this.draw(); };
-  HeatOverlay.prototype.draw = function() {
-    var proj = this.getProjection(), map = this.getMap();
-    if (!proj || !map || !this.div || !map.getCenter()) return;
-    var o = this.opts, zoom = map.getZoom(), center = map.getCenter();
-    // Radio en metros reales -> pixeles del zoom actual (con minimo/maximo para que se vea)
-    var mpp = 156543.03392 * Math.cos(center.lat()*Math.PI/180) / Math.pow(2, zoom);
-    var r = Math.round(Math.max(o.minPx||14, Math.min(o.maxPx||70, (o.metros||700)/mpp)));
-    var md = map.getDiv(), W = md.offsetWidth, H = md.offsetHeight;
-    var cp = proj.fromLatLngToDivPixel(center);
-    var left = Math.round(cp.x - W/2 - r), top = Math.round(cp.y - H/2 - r);
-    var w = W + 2*r, h = H + 2*r, dpr = window.devicePixelRatio || 1;
-    var d = this.div, cv = this.canvas;
-    d.style.left = left+'px'; d.style.top = top+'px'; d.style.width = w+'px'; d.style.height = h+'px';
-    cv.style.width = w+'px'; cv.style.height = h+'px';
-    cv.width = Math.round(w*dpr); cv.height = Math.round(h*dpr);
-    var ctx = cv.getContext('2d');
-    ctx.clearRect(0, 0, cv.width, cv.height);
-    var R = r*dpr, hay = false;
-    this.points.forEach(function(p) {
-      var px = proj.fromLatLngToDivPixel(new google.maps.LatLng(p.lat, p.lng));
-      var x = (px.x - left)*dpr, y = (px.y - top)*dpr;
-      if (x < -R || y < -R || x > cv.width+R || y > cv.height+R) return;
-      var g = ctx.createRadialGradient(x, y, 0, x, y, R);
-      g.addColorStop(0, 'rgba(0,0,0,0.12)'); g.addColorStop(1, 'rgba(0,0,0,0)');
-      ctx.fillStyle = g; ctx.fillRect(x-R, y-R, 2*R, 2*R);
-      hay = true;
-    });
-    if (!hay) return;
-    // Colorear: la zona con mas envios en pantalla = rojo (extremos locales)
-    var img = ctx.getImageData(0, 0, cv.width, cv.height), px = img.data, max = 0;
-    for (var i = 3; i < px.length; i += 4) if (px[i] > max) max = px[i];
-    if (!max) return;
-    var pico = 0.12*255; // alfa del centro de un solo envio
-    for (var j = 0; j < px.length; j += 4) {
-      var a = px[j+3];
-      if (!a) continue;
-      var v = Math.round((0.25 + 0.75*a/max)*255); // un envio aislado se ve azul tenue
-      if (v > 255) v = 255;
-      px[j] = PAL[v*4]; px[j+1] = PAL[v*4+1]; px[j+2] = PAL[v*4+2];
-      px[j+3] = PAL[v*4+3] * Math.min(1, a/pico); // borde suave
-    }
-    ctx.putImageData(img, 0, 0);
-  };
-  _HeatOverlayClass = HeatOverlay;
-  return HeatOverlay;
+// Carga perezosa del plugin heatmap.js para Google Maps (HeatmapOverlay).
+// Sustituye a google.maps.visualization.HeatmapLayer, que Google eliminó.
+var _heatmapOverlayPromise = null;
+function loadHeatmapOverlayPlugin() {
+  if (window.HeatmapOverlay) return Promise.resolve();
+  if (_heatmapOverlayPromise) return _heatmapOverlayPromise;
+  _heatmapOverlayPromise = new Promise(function(resolve, reject) {
+    var s = document.createElement('script');
+    s.src = 'https://cdn.jsdelivr.net/npm/heatmap.js@2.0.5/plugins/gmaps-heatmap/gmaps-heatmap.js';
+    s.onload = function(){ resolve(); };
+    s.onerror = function(e){ _heatmapOverlayPromise = null; reject(e); };
+    document.head.appendChild(s);
+  });
+  return _heatmapOverlayPromise;
 }
 
 function renderDeliveryMap(ventas) {
@@ -2855,11 +2787,31 @@ function renderDeliveryMap(ventas) {
   mapEl.style.display = 'block';
   if(emptyEl) emptyEl.style.display = 'none';
 
-  // Mapa de calor anclado al mapa (se mueve y escala con el zoom)
-  var heatData = points.map(function(p){ return {lat: p.lat(), lng: p.lng()}; });
-  var HeatOverlay = getHeatOverlayClass();
-  heatmapLayer = new HeatOverlay(heatData, {metros: 900, minPx: 14, maxPx: 80});
-  if (showingHeatmap) heatmapLayer.setMap(deliveryMap);
+  // Heatmap independiente (heatmap.js), no depende de la función deprecada de Google
+  var heatData = points.map(function(p){ return {lat: p.lat(), lng: p.lng(), count: 1}; });
+  var mapForHeatmap = deliveryMap;
+  loadHeatmapOverlayPlugin().then(function(){
+    if(deliveryMap !== mapForHeatmap) return; // se recreó el mapa mientras cargaba
+    heatmapLayer = new HeatmapOverlay(showingHeatmap ? deliveryMap : null, {
+      radius: 45,
+      maxOpacity: 0.85,
+      scaleRadius: false,
+      useLocalExtrema: true,
+      latField: 'lat',
+      lngField: 'lng',
+      valueField: 'count',
+      gradient: {
+        0.2: 'rgba(127,176,255,0.3)',
+        0.45: 'rgba(127,176,255,0.7)',
+        0.7: 'rgba(47,111,237,0.85)',
+        1.0: 'rgba(255,50,50,1)'
+      }
+    });
+    heatmapLayer.setData({ max: 1, data: heatData });
+  }).catch(function(e){
+    console.warn('No se pudo cargar el heatmap independiente (heatmap.js):', e);
+    heatmapLayer = null;
+  });
 
   // Markers for point view
   (ventas||[]).filter(function(v){ return v.lat && v.lng; }).forEach(function(v) {
@@ -3123,8 +3075,6 @@ cargarDatos();
 <!-- VISTA CORTE DE CAJA (ORP) -->
 <div id="wa-alerta" class="wa-alerta" hidden onclick="waIrAlerta()"></div>
 <div id="rep-alerta" class="wa-alerta rep-alerta" hidden onclick="repIrAlerta()"></div>
-<div id="av-alerta" class="wa-alerta av-alerta" hidden></div>
-<div id="wa-sonido" class="wa-sonido" hidden onclick="waSonidoActivar()">🔇 Sonido de pedidos apagado · <b>toca aquí para activarlo</b></div>
 <div class="vista" id="vista-whatsapp">
   <div class="orp-page">
     <div class="orp-top">
@@ -3211,7 +3161,6 @@ cargarDatos();
             </select>
           </label>
           <label>Números de prueba<input id="wa-cfg-probadores" class="orp-inp" placeholder="Ej. 844 123 4567, 844 765 4321"></label>
-          <label>Horario de pedidos<input id="wa-cfg-horario" class="orp-inp" placeholder="Ej. lunes a sábado de 8:00 am a 2:00 pm"></label>
           <label>Tiempo para recoger<input id="wa-cfg-pickup" class="orp-inp" placeholder="Ej. 20 minutos"></label>
           <label>Tiempo a domicilio<input id="wa-cfg-domicilio" class="orp-inp" placeholder="Ej. 40 a 60 minutos"></label>
           <label>Datos para transferencia<textarea id="wa-cfg-transf" class="orp-inp" rows="3" placeholder="Banco, titular y cuenta o CLABE. El bot se los manda al cliente que paga con transferencia."></textarea></label>
@@ -3223,6 +3172,8 @@ cargarDatos();
             </select>
           </label>
         </div>
+        <div class="orp-box-n" style="margin-top:14px">🕗 Horario de pedidos. Desmarca el día que no abres (ej. domingo). Con la cocina cerrada el bot no toma pedidos: avisa con amabilidad y dice a qué hora abres.</div>
+        <div id="wa-horario" class="hor-grid"></div>
         <div style="display:flex;gap:10px;align-items:center;margin-top:14px;flex-wrap:wrap">
           <button class="orp-btn lleno" onclick="waGuardarAjustes()">Guardar</button>
           <span class="orp-cs" id="wa-consumo"></span>
@@ -4560,7 +4511,7 @@ function waAudioCtx(){
   } catch (e) {}
   return waAudio;
 }
-['click', 'keydown', 'touchstart'].forEach(function(ev){ document.addEventListener(ev, function(){ waAudioCtx(); setTimeout(waSonidoRevisar, 300); }, {once: true, capture: true}); });
+['click', 'keydown', 'touchstart'].forEach(function(ev){ document.addEventListener(ev, waAudioCtx, {once: true, capture: true}); });
 function waSonar(){
   var ctx = waAudioCtx(); if (!ctx) return;
   // Timbre tipo tablet de plataforma: dos rondas de tres notas
@@ -4574,35 +4525,8 @@ function waSonar(){
     o.connect(g); g.connect(ctx.destination); o.start(t0); o.stop(t0 + 0.18);
   });
 }
-// Alarma urgente (nadie aceptó llevar un pedido): pulsos graves-agudos, distinta al timbre de pedido nuevo
-function waAlarma(){
-  var ctx = waAudioCtx(); if (!ctx) return;
-  for (var k = 0; k < 6; k++) {
-    var o = ctx.createOscillator(), g = ctx.createGain(), t0 = ctx.currentTime + k * 0.32;
-    o.type = 'square'; o.frequency.value = k % 2 ? 523 : 784;
-    g.gain.setValueAtTime(0.0001, t0);
-    g.gain.exponentialRampToValueAtTime(0.35, t0 + 0.02);
-    g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.28);
-    o.connect(g); g.connect(ctx.destination); o.start(t0); o.stop(t0 + 0.3);
-  }
-}
-// Aviso suave (un repartidor aceptó): una sola nota
-function waPing(){
-  var ctx = waAudioCtx(); if (!ctx) return;
-  var o = ctx.createOscillator(), g = ctx.createGain(), t0 = ctx.currentTime;
-  o.type = 'sine'; o.frequency.value = 1319;
-  g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.5, t0 + 0.02); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.5);
-  o.connect(g); g.connect(ctx.destination); o.start(t0); o.stop(t0 + 0.55);
-}
-// El navegador no deja sonar hasta que alguien toque la pantalla: si el sonido está bloqueado, se avisa
-function waSonidoRevisar(){
-  var el = document.getElementById('wa-sonido'); if (!el) return;
-  el.hidden = !!(waAudio && waAudio.state === 'running');
-}
-function waSonidoActivar(){ waAudioCtx(); waSonar(); setTimeout(waSonidoRevisar, 400); }
 var waUltimoSonido = 0;
 function waRevisar(){
-  waSonidoRevisar();
   // Pedidos cerrados por el bot que nadie ha aceptado (los del simulador del POS no cuentan)
   sbFetch('wa_pedidos?estado=eq.nuevo&telefono=neq.SIMULADOR&select=id,nombre,total&order=id.desc&limit=50').then(function(r){
     var b = document.getElementById('wa-badge');
@@ -4623,54 +4547,6 @@ function waRevisar(){
     if (v && v.classList.contains('active') && (waSec === 'pedidos' || waSec === 'chats')) waCargar();
   }).catch(function(){});
 }
-// Avisos del bot: un repartidor (o cliente) escribió algo que el equipo tiene que resolver. Suena y se queda hasta «Enterado».
-var avYaSono = {};
-function avRevisar(){
-  Promise.all([
-    sbFetch('wa_chats?contexto->aviso->>estado=eq.pendiente&telefono=neq.SIMULADOR&select=telefono,nombre,contexto&order=ultimo_mensaje.desc&limit=20'),
-    sbFetch('config_orp?clave=eq.bot_agotados&select=texto').catch(function(){ return []; })
-  ]).then(function(res){
-    var r = res[0] || [], ag = [];
-    try { ag = JSON.parse((res[1] && res[1][0] && res[1][0].texto) || '[]'); } catch(e) { ag = []; }
-    var el = document.getElementById('av-alerta');
-    if (!r.length && !ag.length) { el.hidden = true; return; }
-    var nuevo = r.some(function(c){ return !avYaSono[c.telefono + c.contexto.aviso.creado]; }) ||
-      ag.some(function(a){ return !avYaSono['ag:' + a.nombre + a.veces]; });
-    r.forEach(function(c){ avYaSono[c.telefono + c.contexto.aviso.creado] = 1; });
-    ag.forEach(function(a){ avYaSono['ag:' + a.nombre + a.veces] = 1; });
-    if (nuevo) waSonar();
-    el.innerHTML = ag.map(function(a){
-      return '<div class="av-f"><div>🚫 <b>Agotado: ' + waEsc(a.nombre) + '</b><br><small>Lo ' + (a.veces > 1 ? 'pidieron ' + a.veces + ' clientes' : 'pidió un cliente') + ' por WhatsApp. Enciéndelo o súbele stock en cuanto llegue.</small></div>' +
-        '<span onclick="event.stopPropagation();avAgotadoOk(decodeURIComponent(\'' + encodeURIComponent(a.nombre).replace(/'/g, '%27') + '\'))">Enterado</span></div>';
-    }).join('') + r.map(function(c){
-      var a = c.contexto.aviso || {}, p = a.pedido || null;
-      var quien = a.quien === 'repartidor' ? '🛵 Repartidor' : '👤 Cliente';
-      var plat = a.plataforma && a.plataforma !== 'propio' && a.plataforma !== 'no se sabe' ? ' · ' + waEsc(a.plataforma.toUpperCase()) : '';
-      var ped = p ? '<br><small>Pedido #' + p.id + (p.cliente ? ' · ' + waEsc(p.cliente) : '') + (p.tel ? ' · ' + waTel(p.tel) : '') + (p.direccion ? ' · ' + waEsc(p.direccion) : '') + '</small>' : '';
-      return '<div class="av-f" onclick="avAbrir(\'' + waEsc(c.telefono) + '\')"><div>' + quien + plat + ' <b>' + waEsc(c.nombre || waTel(c.telefono)) + '</b> · ' + waTel(c.telefono) + '<br><b>' + waEsc(a.tema || '') + '</b>' + ped + '</div>' +
-        '<span onclick="event.stopPropagation();avEnterado(\'' + waEsc(c.telefono) + '\')">Enterado</span></div>';
-    }).join('');
-    el.hidden = false;
-  }).catch(function(){});
-}
-function avAgotadoOk(nombre){
-  sbFetch('config_orp?clave=eq.bot_agotados&select=texto').then(function(r){
-    var ag = []; try { ag = JSON.parse((r[0] && r[0].texto) || '[]'); } catch(e) {}
-    ag = ag.filter(function(a){ return a.nombre !== nombre; });
-    return sbFetch('config_orp?clave=eq.bot_agotados', 'PATCH', {texto: JSON.stringify(ag)});
-  }).then(function(){ avRevisar(); }).catch(function(e){ toast(e.message, true); });
-}
-function avAbrir(tel){
-  irVista('whatsapp', document.querySelector('.nav-tab[data-vista=whatsapp]'));
-  waChatSel = tel; waSeccion('chats');
-}
-function avEnterado(tel){
-  sbFetch('wa_chats?telefono=eq.' + encodeURIComponent(tel) + '&select=contexto').then(function(r){
-    var ctx = (r[0] && r[0].contexto) || {};
-    if (ctx.aviso) { ctx.aviso.estado = 'atendido'; ctx.aviso.atendido = new Date().toISOString(); }
-    return sbFetch('wa_chats?telefono=eq.' + encodeURIComponent(tel), 'PATCH', {contexto: ctx});
-  }).then(function(){ avRevisar(); }).catch(function(e){ toast(e.message, true); });
-}
 function waIrAlerta(){
   waFil = 'nuevo';
   irVista('whatsapp', document.querySelector('.nav-tab[data-vista=whatsapp]'));
@@ -4679,7 +4555,6 @@ function waIrAlerta(){
 function waIniciar(){
   if (window._waIniciado) return; window._waIniciado = true;
   waRevisar(); setInterval(waRevisar, 10000);
-  avRevisar(); setInterval(avRevisar, 10000);
   waCargarCfg();
 }
 
@@ -4705,7 +4580,7 @@ function waCargarCfg(llenar){
       var t = function(k){ return (waCfg[k] || {}).texto || ''; };
       document.getElementById('wa-cfg-activo').value = String(modo);
       document.getElementById('wa-cfg-probadores').value = t('bot_probadores');
-      document.getElementById('wa-cfg-horario').value = t('bot_horario');
+      waHorarioPintar(t('bot_horario_dias'));
       document.getElementById('wa-cfg-pickup').value = t('bot_tiempo_pickup');
       document.getElementById('wa-cfg-domicilio').value = t('bot_tiempo_domicilio');
       document.getElementById('wa-cfg-transf').value = t('bot_transferencia');
@@ -4936,8 +4811,7 @@ function waCargarChats(){
       return '<div class="wa-ch' + (c.telefono === waChatSel ? ' sel' : '') + '" onclick="waChatSel=\'' + waEsc(c.telefono) + '\';waCargarChats()">' +
         '<div><b>' + waEsc(c.nombre || waTel(c.telefono)) + '</b><small>' + waTel(c.telefono) + ' · ' + waCuando(c.ultimo_mensaje) + '</small></div>' +
         '<span class="orp-pill" style="' + (equipo ? 'background:rgba(34,181,115,.15);color:#4ade80' : 'background:rgba(47,111,237,.18);color:#9dbbff') + '">' +
-        (equipo ? '👤 Equipo' : '🤖 Bot') + '</span>' +
-        (c.contexto && c.contexto.aviso && c.contexto.aviso.estado === 'pendiente' ? '<span class="orp-pill" style="background:rgba(234,88,12,.2);color:#fb923c;margin-left:6px">⚠️ Aviso</span>' : '') + '</div>';
+        (equipo ? '👤 Equipo' : '🤖 Bot') + '</span></div>';
     }).join('') : '<div class="wa-vacio">Todavía no hay conversaciones.</div>';
     var c = r.find(function(x){ return x.telefono === waChatSel; });
     if (!c) { if (!waChatSel) { document.getElementById('wa-conv').innerHTML = ''; document.getElementById('wa-conv-btns').innerHTML = ''; } return; }
@@ -4988,11 +4862,58 @@ function waSimReiniciar(){
   waFn({simulador: true, reiniciar: true}).then(function(){ waSimPintar(''); document.getElementById('wa-sim-txt').focus(); });
 }
 
+// ---------- horario por día ----------
+// Se guarda en config_orp.bot_horario_dias como 7 lugares (0 = domingo). null = ese día no abrimos.
+var WA_DIAS = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
+function waHorarioPintar(json){
+  var dias;
+  try { dias = JSON.parse(json || 'null'); } catch (e) { dias = null; }
+  if (!dias || dias.length !== 7) dias = [null, null, null, null, null, null, null].map(function(x, i){ return i === 0 ? null : {abre: '07:30', cierra: '13:45'}; });
+  var orden = [1, 2, 3, 4, 5, 6, 0];
+  document.getElementById('wa-horario').innerHTML = orden.map(function(d){
+    var f = dias[d];
+    return '<div class="hor-fila' + (f ? '' : ' off') + '" data-d="' + d + '">' +
+      '<label class="wa-check"><input type="checkbox"' + (f ? ' checked' : '') + ' onchange="waHorarioTilde(this)"> ' + WA_DIAS[d] + '</label>' +
+      '<input class="orp-inp hor-a" type="time" value="' + ((f && f.abre) || '07:30') + '"' + (f ? '' : ' disabled') + '>' +
+      '<span class="hor-sep">a</span>' +
+      '<input class="orp-inp hor-c" type="time" value="' + ((f && f.cierra) || '13:45') + '"' + (f ? '' : ' disabled') + '></div>';
+  }).join('');
+}
+function waHorarioTilde(chk){
+  var fila = chk.closest('.hor-fila');
+  fila.classList.toggle('off', !chk.checked);
+  [].forEach.call(fila.querySelectorAll('input[type=time]'), function(i){ i.disabled = !chk.checked; });
+}
+function waHorarioLeer(){
+  var dias = [null, null, null, null, null, null, null];
+  [].forEach.call(document.querySelectorAll('#wa-horario .hor-fila'), function(fila){
+    if (!fila.querySelector('input[type=checkbox]').checked) return;
+    var a = fila.querySelector('.hor-a').value, c = fila.querySelector('.hor-c').value;
+    if (a && c) dias[Number(fila.getAttribute('data-d'))] = {abre: a, cierra: c};
+  });
+  return {dias: dias, texto: waHorarioTexto(dias)};
+}
+// Texto legible ("lunes a sábado de 7:30 am a 1:45 pm; domingo cerrado"), por si algo lo lee
+function waHorarioTexto(dias){
+  var bonita = function(h){ var p = h.split(':'), H = Number(p[0]), s = H >= 12 ? 'pm' : 'am', h12 = (H % 12) || 12; return h12 + ':' + p[1] + ' ' + s; };
+  var orden = [1, 2, 3, 4, 5, 6, 0], partes = [], i = 0;
+  while (i < 7) {
+    var d = orden[i], f = dias[d], j = i + 1;
+    while (j < 7 && JSON.stringify(dias[orden[j]]) === JSON.stringify(f)) j++;
+    var rango = j - i > 1 ? WA_DIAS[d].toLowerCase() + ' a ' + WA_DIAS[orden[j - 1]].toLowerCase() : WA_DIAS[d].toLowerCase();
+    partes.push(f ? rango + ' de ' + bonita(f.abre) + ' a ' + bonita(f.cierra) : rango + ' cerrado');
+    i = j;
+  }
+  return partes.join('; ');
+}
+
 // ---------- ajustes ----------
 function waGuardarAjustes(){
   var v = function(id){ return document.getElementById(id).value.trim(); };
+  var hor = waHorarioLeer();
   var filas = [
-    ['bot_horario', v('wa-cfg-horario')], ['bot_tiempo_pickup', v('wa-cfg-pickup')], ['bot_tiempo_domicilio', v('wa-cfg-domicilio')],
+    ['bot_horario_dias', JSON.stringify(hor.dias)], ['bot_horario', hor.texto],
+    ['bot_tiempo_pickup', v('wa-cfg-pickup')], ['bot_tiempo_domicilio', v('wa-cfg-domicilio')],
     ['bot_transferencia', v('wa-cfg-transf')], ['bot_notas', v('wa-cfg-notas')], ['bot_modelo', v('wa-cfg-modelo')],
     ['bot_probadores', v('wa-cfg-probadores')]
   ];
@@ -5276,18 +5197,15 @@ function repManual(id, repId){
 }
 
 // Alerta: «Juan va por el pedido #12» o «Nadie aceptó el #12». Suena y se queda hasta que le dan Enterado.
-var repYaSono = {}, repUltimaAlarma = 0;
+var repYaSono = {};
 function repRevisar(){
   sbFetch('wa_pedidos?reparto_avisado=eq.false&reparto_estado=in.(asignado,sin_repartidor)&select=id,reparto_estado,repartidor_nombre,reparto_intentos&order=id').then(function(r){
     var el = document.getElementById('rep-alerta');
     if (!r.length) { el.hidden = true; return; }
-    var nuevoMalo = r.some(function(p){ return p.reparto_estado === 'sin_repartidor' && !repYaSono[p.id + p.reparto_estado]; });
-    var nuevoBueno = r.some(function(p){ return p.reparto_estado === 'asignado' && !repYaSono[p.id + p.reparto_estado]; });
+    var nuevo = r.some(function(p){ return !repYaSono[p.id + p.reparto_estado]; });
     r.forEach(function(p){ repYaSono[p.id + p.reparto_estado] = 1; });
+    if (nuevo) waSonar();
     var malo = r.some(function(p){ return p.reparto_estado === 'sin_repartidor'; });
-    // Nadie aceptó: alarma y se repite cada 30 s hasta que le den Enterado o lo asignen a mano
-    if (malo && (nuevoMalo || Date.now() - repUltimaAlarma > 29000)) { waAlarma(); repUltimaAlarma = Date.now(); }
-    else if (nuevoBueno) waPing();
     el.className = 'wa-alerta rep-alerta' + (malo ? ' malo' : '');
     el.innerHTML = '<div>' + r.map(function(p){
       return p.reparto_estado === 'asignado' ? '🛵 <b>' + waEsc(p.repartidor_nombre || 'Un repartidor') + '</b> va por el pedido <b>#' + p.id + '</b>'
