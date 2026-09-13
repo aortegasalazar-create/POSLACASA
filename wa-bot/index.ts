@@ -43,11 +43,12 @@ const dinero = (n: number) => "$" + (Math.round(n * 100) / 100).toLocaleString("
 const ahoraLocal = () =>
   new Date().toLocaleString("es-MX", { timeZone: TZ, weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
 
-// Tarifa de envío: la MISMA del POS. Km de la RUTA en coche (Google Maps), redondeados hacia arriba.
-// Hasta 3 km = $40 y cada km adicional +$10 (4 km $50 … 15 km $160, y así hacia arriba).
+// Tarifa de envío: la MISMA tabla del POS (km por calles, redondeado hacia arriba)
 function costoEnvio(km: number) {
-  const d = Math.max(3, Math.ceil(km));
-  return 40 + (d - 3) * 10;
+  const d = Math.ceil(km);
+  const t: Record<number, number> = { 1: 25, 2: 25, 3: 37, 4: 47, 5: 56, 6: 65, 7: 74, 8: 84, 9: 93, 10: 102, 11: 112, 12: 121, 13: 130, 14: 140, 15: 149,
+    16: 158, 17: 167, 18: 177, 19: 186, 20: 195, 21: 205, 22: 214, 23: 223, 24: 233, 25: 242, 26: 251, 27: 260, 28: 269, 29: 278, 30: 288 };
+  return t[d] ?? 288 + (d - 30) * 10;
 }
 function kmLineaRecta(lat: number, lng: number) { // respaldo del POS cuando no hay ruta
   const R = 6371, dLat = (lat - ORIGEN.lat) * Math.PI / 180, dLon = (lng - ORIGEN.lng) * Math.PI / 180;
@@ -69,28 +70,17 @@ type Grupo = { id: number; nombre: string; tipo: string; pids: number[]; orden: 
 type Producto = { id: number; nombre: string; precio: number; descripcion: string; categoria: string };
 
 async function cargarMenu(excluir: number[]) {
-  const [p, g, o, pOff, oOff] = await Promise.all([
-    sb.from("productos").select("id,nombre,precio,descripcion,stock,categorias(nombre)").eq("activo", true).order("nombre"),
+  const [p, g, o] = await Promise.all([
+    sb.from("productos").select("id,nombre,precio,descripcion,categorias(nombre)").eq("activo", true).order("nombre"),
     sb.from("grupos_modificadores").select("id,nombre,tipo,producto_ids,orden").eq("activo", true).order("orden"),
     sb.from("opciones_modificadores").select("id,grupo_id,nombre,precio_extra").eq("activo", true).order("id"),
-    sb.from("productos").select("id,nombre").eq("activo", false),
-    sb.from("opciones_modificadores").select("id,grupo_id,nombre").eq("activo", false),
   ]);
-  // Lo que se apagó o se quedó sin stock: el bot no lo vende, avisa al cliente y le avisa al equipo
-  const gruposActivos = new Map((g.data ?? []).map((x: any) => [x.id, x.nombre]));
-  const activasNom = new Set((o.data ?? []).map((x: any) => String(x.nombre).trim().toLowerCase())); // si sigue activa en otro grupo, no está agotada
-  const agotados = [
-    ...(p.data ?? []).filter((x: any) => !excluir.includes(x.id) && x.stock != null && Number(x.stock) <= 0).map((x: any) => ({ id: x.id, nombre: x.nombre, tipo: "producto", motivo: "sin stock" })),
-    ...(pOff.data ?? []).filter((x: any) => !excluir.includes(x.id)).map((x: any) => ({ id: x.id, nombre: x.nombre, tipo: "producto", motivo: "apagado" })),
-    ...(oOff.data ?? []).filter((x: any) => gruposActivos.has(x.grupo_id) && !activasNom.has(String(x.nombre).trim().toLowerCase())).map((x: any) => ({ id: x.id, nombre: `${x.nombre} (${gruposActivos.get(x.grupo_id)})`, tipo: "opcion", motivo: "apagado" })),
-  ];
-  const sinStock = new Set(agotados.filter((a) => a.tipo === "producto").map((a) => a.id));
-  const productos: Producto[] = (p.data ?? []).filter((x) => !excluir.includes(x.id) && !sinStock.has(x.id)).map((x: any) => ({
+  const productos: Producto[] = (p.data ?? []).filter((x) => !excluir.includes(x.id)).map((x: any) => ({
     id: x.id, nombre: x.nombre, precio: Number(x.precio), descripcion: x.descripcion ?? "", categoria: x.categorias?.nombre ?? "",
   }));
   const grupos: Grupo[] = (g.data ?? []).map((x: any) => ({ id: x.id, nombre: x.nombre, tipo: x.tipo, pids: x.producto_ids ?? [], orden: x.orden ?? 0 }));
   const opciones: Opcion[] = (o.data ?? []).map((x: any) => ({ id: x.id, gid: x.grupo_id, nombre: x.nombre, precio: Number(x.precio_extra || 0) }));
-  return { productos, grupos, opciones, agotados };
+  return { productos, grupos, opciones };
 }
 
 function menuTexto(m: Awaited<ReturnType<typeof cargarMenu>>) {
@@ -114,11 +104,7 @@ function valorarItems(items: ItemIn[], m: Awaited<ReturnType<typeof cargarMenu>>
   const errores: string[] = [];
   const lineas = (items ?? []).map((it) => {
     const p = m.productos.find((x) => x.id === Number(it.producto_id));
-    if (!p) {
-      const ag = m.agotados.find((a) => a.tipo === "producto" && a.id === Number(it.producto_id));
-      errores.push(ag ? `${ag.nombre} está agotado por ahora: díselo al cliente, ofrécele algo parecido del menú y usa avisar_agotado` : `El producto ${it.producto_id} no está en el menú de WhatsApp`);
-      return null;
-    }
+    if (!p) { errores.push(`El producto ${it.producto_id} no está en el menú de WhatsApp`); return null; }
     const cant = Math.max(1, Math.round(Number(it.cantidad || 1)));
     const gs = m.grupos.filter((g) => g.pids.includes(p.id));
     const opc = (ids: number[] | undefined) => (ids ?? []).map((id) => m.opciones.find((o) => o.id === Number(id))).filter(Boolean) as Opcion[];
@@ -253,7 +239,7 @@ async function cotizarEnvio(direccion: string | undefined, lat?: number, lng?: n
     dLat = r.lat; dLng = r.lng; formateada = r.direccion; lugar = r.lugar;
   }
   if (dLat == null || dLng == null) return { ok: false, error: "Necesito la dirección completa o la ubicación 📍 del cliente." };
-  let km = 0, metodo = "";
+  let km = kmLineaRecta(dLat, dLng), metodo = "aprox";
   if (GMAPS_KEY) {
     try {
       const u = `https://maps.googleapis.com/maps/api/directions/json?origin=${ORIGEN.lat},${ORIGEN.lng}&destination=${dLat},${dLng}&alternatives=true&mode=driving&key=${GMAPS_KEY}`;
@@ -262,11 +248,7 @@ async function cotizarEnvio(direccion: string | undefined, lat?: number, lng?: n
         km = Math.min(...d.routes.map((r: any) => r.legs[0].distance.value)) / 1000; metodo = "por calles";
         if (!formateada) formateada = d.routes[0].legs[0].end_address;
       }
-    } catch (_) { /* sin ruta */ }
-  }
-  // El envío SIEMPRE se cobra por la ruta en calles, nunca en línea recta: si Google no da ruta, lo confirma el equipo
-  if (metodo !== "por calles") {
-    return { ok: false, error: `No pude calcular la ruta por calles hasta ${formateada || "esa dirección"}. Dile al cliente que en un momento le confirmamos el costo del envío y usa avisar_equipo (quien=cliente, tema: «Confirmar costo de envío a ${formateada || "la dirección del cliente"}»).` };
+    } catch (_) { /* se queda la aproximación */ }
   }
   const enZona = !formateada || ZONA.test(formateada);
   return { ok: true, lugar, direccion: formateada, lat: dLat, lng: dLng, km: Math.round(km * 10) / 10, envio: costoEnvio(km), metodo, en_zona: enZona,
@@ -323,46 +305,89 @@ const TOOLS = [
     }, required: ["items"] },
   },
   {
-    name: "avisar_equipo",
-    description: "Manda una alerta al POS para que el equipo de la cocina resuelva algo, y el bot deja de contestar este chat para que lo atienda una persona. Úsala SIEMPRE que quien escribe sea un REPARTIDOR (nuestro o de Rappi, DiDi o Uber), con cualquier tema. También cuando un CLIENTE avisa algo de un pedido que ya hizo: ya llegó a la tienda por él, no le ha llegado, llegó incompleto o mal.",
-    input_schema: { type: "object", properties: {
-      quien: { type: "string", enum: ["repartidor", "cliente"] },
-      tema: { type: "string", description: "Resumen corto y claro para el equipo, ej. «El repartidor está en el domicilio del pedido #12 y el cliente no sale ni contesta»" },
-      pedido: { type: "integer", description: "Folio del pedido si lo mencionan o lo sabes" },
-      plataforma: { type: "string", enum: ["propio", "rappi", "didi", "uber", "no se sabe"], description: "De qué canal es el pedido del que habla" },
-    }, required: ["quien", "tema"] },
-  },
-  {
-    name: "avisar_agotado",
-    description: "Avisa al equipo (alerta en el POS) que un cliente pidió algo que está agotado o apagado, para que lo vuelvan a encender en cuanto llegue. NO pasa el chat al equipo: tú sigues atendiendo al cliente.",
-    input_schema: { type: "object", properties: { nombre: { type: "string", description: "Lo que pidió y no hay, como aparece en la lista de NO DISPONIBLE" } }, required: ["nombre"] },
-  },
-  {
     name: "pasar_a_humano",
     description: "Pasa la conversación al equipo: quejas, algo que no está en el menú, pedidos grandes o para evento, facturas, dudas que no sabes, o si el cliente pide hablar con una persona.",
     input_schema: { type: "object", properties: { motivo: { type: "string" } }, required: ["motivo"] },
   },
 ];
 
-function reglas(c: Awaited<ReturnType<typeof config>>, reciente: string, promosTxt = "", agotadosTxt = "") {
+// ---------- horario por día ----------
+// config_orp.bot_horario_dias guarda algo como [{"abre":"07:30","cierra":"13:45"}, ...] con 7 lugares (0 = domingo).
+// null en un día = cerrado. Si no está configurado, se usa el texto libre bot_horario como antes.
+const DIAS_N = ["domingo", "lunes", "martes", "miércoles", "jueves", "viernes", "sábado"];
+type Franja = { abre: string; cierra: string } | null;
+function leerHorarioDias(c: Awaited<ReturnType<typeof config>>): Franja[] | null {
+  try {
+    const j = JSON.parse((c.bot_horario_dias?.texto ?? "").trim() || "null");
+    if (!Array.isArray(j) || j.length !== 7) return null;
+    return j.map((d: any) => (d && d.abre && d.cierra ? { abre: String(d.abre), cierra: String(d.cierra) } : null));
+  } catch (_) { return null; }
+}
+function ahoraPartes() {
+  const p = new Intl.DateTimeFormat("en-US", { timeZone: TZ, weekday: "short", hour: "2-digit", minute: "2-digit", hour12: false })
+    .formatToParts(new Date());
+  const g = (t: string) => p.find((x) => x.type === t)?.value ?? "";
+  const dia = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(g("weekday"));
+  const hh = g("hour") === "24" ? "00" : g("hour");
+  return { dia, hm: `${hh}:${g("minute")}` };
+}
+const horaBonita = (h: string) => {
+  const [H, M] = h.split(":").map(Number);
+  const s = H >= 12 ? "pm" : "am", h12 = H % 12 === 0 ? 12 : H % 12;
+  return `${h12}:${String(M).padStart(2, "0")} ${s}`;
+};
+function resumenHorario(dias: Franja[]) {
+  const partes: string[] = [];
+  let i = 1; // empieza en lunes y termina en domingo
+  const orden = [1, 2, 3, 4, 5, 6, 0];
+  while (i <= 7) {
+    const d = orden[i - 1], f = dias[d];
+    let j = i;
+    while (j < 7 && JSON.stringify(dias[orden[j]]) === JSON.stringify(f)) j++;
+    const desde = DIAS_N[d], hasta = DIAS_N[orden[j - 1]];
+    const rango = j - i >= 1 ? `${desde} a ${hasta}` : desde;
+    partes.push(f ? `${rango} de ${horaBonita(f.abre)} a ${horaBonita(f.cierra)}` : `${rango} cerrado`);
+    i = j + 1;
+  }
+  return partes.join("; ");
+}
+function estadoHorario(c: Awaited<ReturnType<typeof config>>) {
+  const dias = leerHorarioDias(c);
+  if (!dias) return null;
+  const { dia, hm } = ahoraPartes();
+  const hoy = dias[dia];
+  const abierto = !!hoy && hm >= hoy.abre && hm <= hoy.cierra;
+  let proxima = "";
+  if (!abierto) {
+    for (let k = 0; k < 7; k++) {
+      const d = (dia + k) % 7, f = dias[d];
+      if (!f) continue;
+      if (k === 0 && hm > f.cierra) continue; // hoy ya cerramos
+      proxima = k === 0 ? `Hoy abrimos a las ${horaBonita(f.abre)}.`
+        : k === 1 ? `Abrimos mañana ${DIAS_N[d]} a las ${horaBonita(f.abre)}.`
+        : `Abrimos el ${DIAS_N[d]} a las ${horaBonita(f.abre)}.`;
+      break;
+    }
+  }
+  return { abierto, resumen: resumenHorario(dias), proxima, cierra: hoy?.cierra ?? null };
+}
+
+function reglas(c: Awaited<ReturnType<typeof config>>, reciente: string, promosTxt = "") {
   const t = (k: string) => (c[k]?.texto ?? "").trim();
+  const hz = estadoHorario(c);
   return `Eres quien toma los pedidos por WhatsApp de una cocina en Saltillo que tiene dos marcas: LA CASA DEL CHILAQUIL (chilaquiles) y DELIGORDAS (gorditas). Es la misma cocina: en un solo pedido pueden venir productos de las dos.
 
 Hoy es ${ahoraLocal()} (hora de Saltillo).
-Horario de pedidos: ${t("bot_horario") || "no lo tengo; si preguntan, di que lo confirma el equipo"}.
+Horario de pedidos: ${hz ? hz.resumen : (t("bot_horario") || "no lo tengo; si preguntan, di que lo confirma el equipo")}.
+${hz ? (hz.abierto
+  ? `AHORA MISMO la cocina está ABIERTA (cerramos a las ${horaBonita(hz.cierra!)}).`
+  : `AHORA MISMO la cocina está CERRADA. ${hz.proxima} REGLA: no tomes el pedido ni uses registrar_pedido. Discúlpate con amabilidad, dile que ahorita estamos cerrados, dile cuándo abrimos e invítalo a escribirnos entonces. Si insiste, pásalo con el equipo.`) : ""}
 Tiempo aproximado para recoger en tienda: ${t("bot_tiempo_pickup") || "lo confirma el equipo"}.
 Tiempo aproximado de entrega a domicilio: ${t("bot_tiempo_domicilio") || "lo confirma el equipo"}.
 Envío a todo Saltillo, Arteaga y Ramos Arizpe (el costo se calcula con cotizar_envio).
 Pago: efectivo o transferencia. Si es efectivo A DOMICILIO pregunta con cuánto paga para llevar cambio; si es para recoger en tienda y en efectivo paga al recoger, no preguntes con cuánto paga.
 Datos para transferencia: ${t("bot_transferencia") || "no los tengo; di que el equipo se los manda en un momento"}.
 ${t("bot_notas") ? "Indicaciones del dueño: " + t("bot_notas") : ""}
-
-QUIÉN TE ESCRIBE
-- A este número escriben CLIENTES y también REPARTIDORES (los nuestros o de Rappi, DiDi o Uber) para avisar algo de una entrega. NUNCA preguntes si es cliente o repartidor ni des opciones tipo "¿vas a pedir o eres repartidor?". Dedúcelo por lo que escribe.
-- Es REPARTIDOR si habla como quien LLEVA o RECOGE un pedido: "el cliente no sale", "no contesta", "ya estoy en el domicilio", "no encuentro la dirección", "vengo por el pedido de Rappi/DiDi/Uber", "¿a nombre de quién?", "no traigo cambio", "voy en camino", un código o número de orden de plataforma, etc. Entonces usa avisar_equipo (quien=repartidor) con un resumen claro y contesta MUY breve, por ejemplo: "Enterado 👍 ya le aviso al equipo para que lo resuelva." Si no sabes de qué pedido habla, en esa misma respuesta pídele el número de pedido o el nombre del cliente. A un repartidor no le ofrezcas el menú ni le tomes pedido.
-- Un CLIENTE que dice "ya llegué" o "estoy afuera" normalmente viene a recoger SU pedido a la tienda (revisa si tiene pedido reciente para recoger): es cliente. Usa avisar_equipo (quien=cliente) y dile que enseguida se lo entregan.
-- Si un cliente avisa un problema con un pedido que ya hizo (no llega, llegó incompleto o mal), usa avisar_equipo (quien=cliente) y dile que el equipo lo revisa en un momento.
-- POR DEFECTO ES CLIENTE. Si solo saluda ("hola", "buenas tardes") o no queda claro, trátalo como cliente: salúdalo cálido, dale la bienvenida a La Casa del Chilaquil y Deligordas e invítalo a pedir (ej. "¡Hola! 😊 Bienvenido a La Casa del Chilaquil y Deligordas. ¿Qué se te antoja hoy?"). Solo toma el camino de repartidor cuando lo que escribe lo deja claro.
 
 CÓMO ATIENDES
 - Escribe como en WhatsApp: corto, cálido, natural, español de México. Nada de párrafos largos ni listas enormes. En WhatsApp las negritas llevan UN solo asterisco (*así*), nunca dos. Úsalas solo para el resumen y el total. Uno o dos emojis como mucho.
@@ -379,10 +404,10 @@ CÓMO ATIENDES
 - AGREGAR A UN PEDIDO: si el cliente ya tiene un pedido reciente (abajo) y quiere sumarle algo ("agrégame…", "también quiero…", "se me olvidó…"), NO hagas un pedido completo nuevo ni repitas lo que ya pidió. Usa revisar_pedido y registrar_pedido con agregar_a=<folio> y en items SOLO lo nuevo. Resumen corto: "Agregamos a tu pedido #N: … Nuevo total: *$X*. ¿Es correcto?". Si es efectivo a domicilio, confirma con cuánto paga ahora. Si el sistema dice que ese pedido ya salió, díselo y ofrécele hacerlo como pedido nuevo (con su propio envío).
 - Ya registrado, dale su número de pedido y, si paga con transferencia, pídele que mande aquí la foto del comprobante.
 - Si algo no está claro o no lo sabes, pregunta o usa pasar_a_humano. Nunca prometas algo que no está aquí.
-- Si te escriben algo que no tiene que ver con pedidos, contesta breve y amable y, si es cliente, regresa al pedido.
+- Si te escriben algo que no tiene que ver con pedidos, contesta breve y amable y regresa al pedido.
 
 ${promosTxt ? "PROMOCIONES VIGENTES (se aplican solas en revisar_pedido; no inventes otras):\n" + promosTxt + "\n- OBLIGATORIO: si el pedido ya trae parte de un combo pero le falta lo demás (ej. pidió chilaquiles grandes y no lleva Coca), en el mensaje donde muestras el resumen agrega ANTES de preguntar si es correcto una línea como: «🎁 Si le agregas una Coca queda en combo y solo pagas $X más (ahorras $Y)». X = precio normal de lo que falta − ahorro del combo. Solo una vez por pedido; si dice que no, no insistas.\n- En el resumen muestra cada promoción aplicada con su descuento, como te la regresa revisar_pedido.\n" : ""}${reciente ? "PEDIDO RECIENTE DE ESTE CLIENTE:\n" + reciente + "\n" : ""}
-${agotadosTxt ? "NO DISPONIBLE AHORA (se terminó o está apagado; NO lo vendas):\n" + agotadosTxt + "\n- Si el cliente pide algo de esta lista, dile con amabilidad que por ahora se nos terminó, ofrécele una alternativa parecida del MENÚ y usa avisar_agotado con su nombre (una vez por producto). No lo menciones si no lo pide.\n\n" : ""}MENÚ (ids entre corchetes; los precios son exactos):`;
+MENÚ (ids entre corchetes; los precios son exactos):`;
 }
 
 // ---------- Claude ----------
@@ -456,7 +481,7 @@ async function atender(tel: string, nombre: string, texto: string, extra: { lat?
   const reciente = await pedidoReciente(tel);
   const promos = await cargarPromos();
   const system = [
-    { type: "text", text: reglas(c, reciente, promosTexto(promos, menu), menu.agotados.map((a) => "- " + a.nombre).join("\n")) },
+    { type: "text", text: reglas(c, reciente, promosTexto(promos, menu)) },
     { type: "text", text: menuTexto(menu), cache_control: { type: "ephemeral" } },
   ];
   const modelo = (c.bot_modelo?.texto || "claude-haiku-4-5-20251001").trim();
@@ -648,65 +673,13 @@ async function herramienta(nombre: string, input: any, ctx: { tel: string; nombr
     await sb.from("wa_chats").update({ nombre: fila.nombre, contexto: ctx.contexto }).eq("telefono", ctx.tel);
     return { ok: true, folio: data.id, total, envio, subtotal: v.subtotal, lineas: resumen };
   }
-  if (nombre === "avisar_equipo") {
-    await crearAviso(ctx.tel, ctx.nombre, { quien: input.quien === "repartidor" ? "repartidor" : "cliente", tema: input.tema, pedido: input.pedido, plataforma: input.plataforma }, ctx.contexto);
-    return { ok: true, nota: input.quien === "repartidor"
-      ? "Listo, el equipo ya tiene la alerta. Contéstale al repartidor muy breve que ya le avisaste al equipo (y pide el número de pedido o nombre del cliente si no lo sabes)."
-      : "Listo, el equipo ya tiene la alerta. Dile al cliente que en un momento lo atienden." };
-  }
-  if (nombre === "avisar_agotado") {
-    await registrarAgotado(String(input.nombre ?? "").trim(), ctx.simulado);
-    return { ok: true, nota: `Listo, el equipo ya tiene el aviso. Ahora escríbele al cliente en un solo mensaje: que por ahora se nos terminó ${input.nombre ?? "eso"} (con amabilidad), y ofrécele 2 o 3 opciones concretas del MENÚ para seguir con su pedido.` };
-  }
   if (nombre === "pasar_a_humano") {
-    await crearAviso(ctx.tel, ctx.nombre, { quien: "cliente", tema: "Pide atención de una persona: " + (input.motivo ?? "") }, ctx.contexto);
+    const hasta = new Date(Date.now() + 2 * 3600 * 1000).toISOString();
+    await sb.from("wa_chats").update({ modo: "equipo", pausado_hasta: hasta }).eq("telefono", ctx.tel);
+    await sb.from("wa_mensajes").insert({ telefono: ctx.tel, rol: "sistema", texto: "Pasado al equipo: " + (input.motivo ?? "") });
     return { ok: true, nota: "Dile al cliente que en un momento lo atiende alguien del equipo." };
   }
   return { ok: false, error: "herramienta desconocida" };
-}
-
-// ---------- avisos al equipo (repartidores y clientes con un tema que resolver) ----------
-// La alerta vive en wa_chats.contexto.aviso; el POS la muestra, suena y el equipo le da «Enterado».
-// El chat pasa al equipo 2 h para que el bot no se meta mientras lo resuelven.
-async function crearAviso(tel: string, nombre: string, a: { quien: string; tema: string; pedido?: number | null; plataforma?: string }, contexto?: any) {
-  let ctxChat = contexto;
-  let nomChat: string | null = null;
-  if (!ctxChat) {
-    const { data: chat } = await sb.from("wa_chats").select("contexto,nombre").eq("telefono", tel).maybeSingle();
-    ctxChat = { ...(chat?.contexto ?? {}) };
-    nomChat = chat?.nombre ?? null;
-  }
-  let pedido: any = null;
-  if (a.pedido) {
-    const { data: p } = await sb.from("wa_pedidos").select("id,nombre,telefono,direccion,entrega,estado").eq("id", Number(a.pedido)).maybeSingle();
-    pedido = p ? { id: p.id, cliente: p.nombre, tel: p.telefono, direccion: p.direccion, entrega: p.entrega, estado: p.estado } : { id: Number(a.pedido) };
-  }
-  const previo = ctxChat.aviso;
-  const reciente = previo?.estado === "pendiente" && Date.now() - new Date(previo.creado).getTime() < 10 * 60 * 1000;
-  const tema = unaLinea(a.tema, 240);
-  ctxChat.aviso = {
-    estado: "pendiente", quien: a.quien, plataforma: a.plataforma ?? previo?.plataforma ?? null,
-    tema: reciente && previo.tema && !previo.tema.includes(tema) ? unaLinea(previo.tema + " / " + tema, 400) : tema,
-    pedido: pedido ?? (reciente ? previo.pedido : null), creado: reciente ? previo.creado : new Date().toISOString(),
-  };
-  const base = nombre || nomChat || "";
-  const fila: Record<string, unknown> = { telefono: tel, contexto: ctxChat, modo: "equipo", pausado_hasta: new Date(Date.now() + 2 * 3600 * 1000).toISOString(), ultimo_mensaje: new Date().toISOString() };
-  if (a.quien === "repartidor" && !/repartidor/i.test(base)) fila.nombre = (base ? base + " " : "") + "(repartidor)";
-  await sb.from("wa_chats").upsert(fila);
-  await sb.from("wa_mensajes").insert({ telefono: tel, rol: "sistema", texto: `⚠️ Aviso al equipo (${a.quien}): ${tema}` });
-  return { nuevo: !reciente };
-}
-
-// Lista de lo que los clientes pidieron y estaba agotado/apagado (config_orp.bot_agotados). El POS la muestra hasta «Enterado».
-async function registrarAgotado(nombre: string, simulado: boolean) {
-  if (!nombre) return;
-  const { data } = await sb.from("config_orp").select("texto").eq("clave", "bot_agotados").maybeSingle();
-  let lista: { nombre: string; veces: number; primero: string; ultimo: string }[] = [];
-  try { lista = JSON.parse(data?.texto || "[]"); } catch (_) { lista = []; }
-  const ahora = new Date().toISOString();
-  const ya = lista.find((x) => x.nombre.toLowerCase() === nombre.toLowerCase());
-  if (ya) { ya.veces++; ya.ultimo = ahora; } else lista.push({ nombre, veces: 1, primero: ahora, ultimo: ahora });
-  await sb.from("config_orp").upsert({ clave: "bot_agotados", texto: JSON.stringify(lista), actualizado: ahora }, { onConflict: "clave" });
 }
 
 // ---------- traducir lo que manda WhatsApp ----------
@@ -965,19 +938,8 @@ async function mensajeRepartidor(tel: string, texto: string, payload: string | n
   // Texto libre sin oferta pendiente: si también es número de prueba, lo atiende el bot de pedidos
   if (!m && (acepta === null || !ofertas?.length)) {
     if (probadores.includes(diez(tel))) return false;
-    const ins0 = await sb.from("wa_mensajes").insert({ telefono: tel, rol: "cliente", texto, wa_id: waId });
-    if (ins0.error) return true; // repetido
+    await sb.from("wa_mensajes").insert({ telefono: tel, rol: "cliente", texto, wa_id: waId });
     await sb.from("wa_chats").upsert({ telefono: tel, nombre: `${rep.nombre} (repartidor)`, ultimo_mensaje: new Date().toISOString(), modo: "equipo" });
-    // «ok», «gracias», «👍»: no hace falta molestar al equipo
-    const t = texto.trim().toLowerCase();
-    if (!t || /^(ok|oki|okey|va|sale|listo|gracias|grax|enterado|perfecto|de acuerdo|👍|🙏|👌|✅)[\s!.,👍🙏]*$/u.test(t)) return true;
-    // su pedido en curso, para que el equipo sepa de qué cliente habla
-    const desde = new Date(Date.now() - 12 * 3600 * 1000).toISOString();
-    const { data: suyo } = await sb.from("wa_pedidos").select("id").eq("repartidor_id", rep.id).eq("reparto_estado", "asignado")
-      .gte("creado", desde).order("id", { ascending: false }).limit(1);
-    const tema = /^\[/.test(texto) ? texto : `${rep.nombre.split(/\s+/)[0]}: «${texto}»`;
-    const r = await crearAviso(tel, `${rep.nombre} (repartidor)`, { quien: "repartidor", tema, pedido: suyo?.[0]?.id ?? null, plataforma: "propio" });
-    if (r.nuevo) await textoRepartidor(rep, "Enterado 👍 ya le avisé al equipo para que lo resuelva.");
     return true;
   }
   const ins = await sb.from("wa_mensajes").insert({ telefono: tel, rol: "cliente", texto, wa_id: waId });
