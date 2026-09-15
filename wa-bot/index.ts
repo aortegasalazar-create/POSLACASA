@@ -411,6 +411,7 @@ ${promosTxt ? "PROMOCIONES VIGENTES (se aplican solas en revisar_pedido; no inve
 - No repitas ni contradigas lo que ya dijo el equipo, ni vuelvas a saludar; continúa la conversación donde va.
 - Si el cliente solo está contestando algo que el equipo le preguntó, o el tema lo está resolviendo el equipo (una queja, un problema con un pedido, un cobro, un reclamo, algo que ya quedó cerrado), NO escribas nada: contesta EXACTAMENTE «[CALLAR]» y nada más.
 - Si dudas entre hablar o callarte cuando el tema es delicado, cállate: contesta «[CALLAR]».
+- Si ya le dijiste que alguien del equipo lo atiende, no se lo repitas: mejor «[CALLAR]».
 ` : ""}${reciente ? "PEDIDO RECIENTE DE ESTE CLIENTE:\n" + reciente + "\n" : ""}
 MENÚ (ids entre corchetes; los precios son exactos):`;
 }
@@ -499,7 +500,7 @@ async function atender(tel: string, nombre: string, texto: string, extra: { lat?
   const promos = await cargarPromos();
   const desde2h = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
   const { data: delEquipo } = await sb.from("wa_mensajes").select("id").eq("telefono", tel).eq("rol", "equipo").gte("creado", desde2h).limit(1);
-  const equipoReciente = !!delEquipo?.length;
+  const equipoReciente = !!delEquipo?.length || chat?.modo === "equipo";
   const system = [
     { type: "text", text: reglas(c, reciente, promosTexto(promos, menu), equipoReciente) },
     { type: "text", text: menuTexto(menu), cache_control: { type: "ephemeral" } },
@@ -698,7 +699,8 @@ async function herramienta(nombre: string, input: any, ctx: { tel: string; nombr
     return { ok: true, folio: data.id, total, envio, subtotal: v.subtotal, lineas: resumen };
   }
   if (nombre === "pasar_a_humano") {
-    const hasta = new Date(Date.now() + 2 * 3600 * 1000).toISOString();
+    const minPausa = Number((await config()).bot_pausa_minutos?.valor ?? 3) || 3;
+    const hasta = new Date(Date.now() + minPausa * 60 * 1000).toISOString();
     await sb.from("wa_chats").update({ modo: "equipo", pausado_hasta: hasta }).eq("telefono", ctx.tel);
     await sb.from("wa_mensajes").insert({ telefono: ctx.tel, rol: "sistema", texto: "Pasado al equipo: " + (input.motivo ?? "") });
     return { ok: true, nota: "Dile al cliente que en un momento lo atiende alguien del equipo." };
