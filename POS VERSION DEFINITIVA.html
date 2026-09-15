@@ -3178,6 +3178,7 @@ cargarDatos();
           <label>Tiempo para recoger<input id="wa-cfg-pickup" class="orp-inp" placeholder="Ej. 20 minutos"></label>
           <label>Tiempo a domicilio<input id="wa-cfg-domicilio" class="orp-inp" placeholder="Ej. 40 a 60 minutos"></label>
           <label>Datos para transferencia<textarea id="wa-cfg-transf" class="orp-inp" rows="3" placeholder="Banco, titular y cuenta o CLABE. El bot se los manda al cliente que paga con transferencia."></textarea></label>
+          <label>Minutos que el bot espera cuando tu equipo contesta<input id="wa-cfg-pausa" class="orp-inp" type="number" min="0" max="60" placeholder="3"></label>
           <label>Mensajes automáticos de tu app de WhatsApp<textarea id="wa-cfg-auto" class="orp-inp" rows="3" placeholder="Pega aquí el saludo automático y el mensaje de ausencia que tengas configurados en la app de WhatsApp Business (uno por renglón). Así el bot sabe que no los escribió tu equipo y no se calla."></textarea></label>
           <label>Indicaciones extra para el bot<textarea id="wa-cfg-notas" class="orp-inp" rows="3" placeholder="Ej. Los domingos no hay gorditas. Promoción: refresco a $20 con cualquier chilaquil."></textarea></label>
           <label>Cerebro del bot
@@ -4601,6 +4602,7 @@ function waCargarCfg(llenar){
       document.getElementById('wa-cfg-transf').value = t('bot_transferencia');
       document.getElementById('wa-cfg-notas').value = t('bot_notas');
       document.getElementById('wa-cfg-auto').value = t('bot_auto_textos');
+      document.getElementById('wa-cfg-pausa').value = Number((waCfg.bot_pausa_minutos || {}).valor != null ? waCfg.bot_pausa_minutos.valor : 3);
       document.getElementById('wa-cfg-modelo').value = t('bot_modelo') || 'claude-sonnet-5';
       waConsumo();
     }
@@ -4935,8 +4937,10 @@ function waGuardarAjustes(){
     ['bot_probadores', v('wa-cfg-probadores')]
   ];
   var activo = Number(document.getElementById('wa-cfg-activo').value) || 0;
+  var pausa = Math.min(60, Math.max(0, parseInt(document.getElementById('wa-cfg-pausa').value) || 0));
   Promise.all(filas.map(function(f){ return sbFetch('config_orp?clave=eq.' + f[0], 'PATCH', {texto: f[1]}); })
-    .concat([sbFetch('config_orp?clave=eq.bot_activo', 'PATCH', {valor: activo})]))
+    .concat([sbFetch('config_orp?clave=eq.bot_activo', 'PATCH', {valor: activo}),
+             sbFetch('config_orp?clave=eq.bot_pausa_minutos', 'PATCH', {valor: pausa})]))
     .then(function(){ toast('Ajustes del bot guardados'); waCargarCfg(true); })
     .catch(function(e){ toast('No se guardó: ' + e.message, true); });
 }
