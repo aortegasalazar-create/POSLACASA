@@ -1088,6 +1088,28 @@ Deno.serve(async (req) => {
     return json({ ok: true, mensaje: r.ok });
   }
   if (body.accion === "reparto_plantilla") return json(await plantillaReparto(!!body.crear));
+  // Pedido a domicilio tomado a mano (en Venta o en un chat que atendió el equipo): se registra y se busca repartidor igual que los del bot
+  if (body.accion === "reparto_nuevo") {
+    const dir = String(body.direccion ?? "").trim();
+    let lat = body.lat ?? null, lng = body.lng ?? null, dirFinal = dir;
+    if ((lat == null || lng == null) && dir && GMAPS_KEY) {
+      const r = await buscarLugar(dir);
+      if (r) { lat = r.lat; lng = r.lng; dirFinal = r.lugar ? `${r.lugar}, ${r.direccion}` : r.direccion; }
+    }
+    if (!dirFinal && lat == null) return json({ ok: false, error: "Necesito la dirección o la ubicación del cliente" }, 400);
+    const tel = String(body.telefono ?? "").replace(/\D/g, "");
+    const { data, error } = await sb.from("wa_pedidos").insert({
+      telefono: tel ? telWa(tel) : "MOSTRADOR", nombre: body.nombre ?? null, estado: "aceptado", entrega: "domicilio",
+      direccion: dirFinal || null, referencias: body.referencias ?? null, lat, lng,
+      pago: body.pago === "transferencia" ? "transferencia" : "efectivo", pagado: !!body.pagado, paga_con: body.paga_con ?? null,
+      items: body.items ?? [], subtotal: Number(body.total ?? 0), envio: Number(body.envio ?? 0), total: Number(body.total ?? 0),
+      venta_id: body.venta_id ?? null, simulado: false, reparto_avisado: true,
+      notas: ["Pedido tomado a mano por el equipo", body.notas].filter(Boolean).join(" · "),
+    }).select("id").single();
+    if (error) return json({ ok: false, error: error.message }, 500);
+    const r = await iniciarReparto(data.id);
+    return json({ ...r, pedido_id: data.id });
+  }
   if (body.accion === "buscar_lugar") return json(await cotizarEnvio(String(body.texto ?? "").slice(0, 200)));
 
   // Simulador del POS: nunca manda WhatsApp, siempre con el teléfono SIMULADOR
