@@ -1557,6 +1557,7 @@ function procesarVenta() {
   var cliId=document.getElementById('sel-cliente').value||null;
   var notas=document.getElementById('notas-cobro').value;
   var plataformas = ['uber_eats','rappi','didi_food'];
+  var itemsVenta = carrito.map(function(i){ return {cantidad: i.qty, nombre: i.nombre, detalle: i.nota || '', importe: i.precio * i.qty}; });
   var canal = plataformas.indexOf(v.tipo) >= 0 ? v.tipo
     : v.tipo === 'delivery' ? (document.getElementById('sel-canal-delivery').value || 'delivery_propio')
     : 'local';
@@ -1647,6 +1648,14 @@ function procesarVenta() {
           exitoWa.style.display = 'none';
         }
       }
+      // pedido a domicilio propio: dejar listo el botón para buscar repartidor
+      var esDom = v.tipo === 'delivery' && canal === 'delivery_propio';
+      window._repVenta = esDom ? {venta_id: vid, total: v.total, pago: metodoPago === 'efectivo' ? 'efectivo' : 'transferencia',
+        nombre: exitoCli ? exitoCli.nombre : (clT || null), telefono: exitoCli ? exitoCli.telefono : null,
+        direccion: window._deliveryAddr || null, lat: window._deliveryLat || null, lng: window._deliveryLng || null,
+        items: itemsVenta, envio: v.envio || 0} : null;
+      var bRep = document.getElementById('btn-exito-rep');
+      if (bRep) { bRep.style.display = esDom ? 'block' : 'none'; bRep.disabled = false; bRep.textContent = '🛵 Buscar repartidor'; }
       abrirModal('modal-exito');
     });
   }).catch(function(e){ toast('Error: '+e.message, true); });
@@ -2986,6 +2995,7 @@ cargarDatos();
       style="display:none;width:100%;padding:15px;border-radius:14px;background:#25D366;color:white;font-size:16px;font-weight:700;text-decoration:none;font-family:Inter,sans-serif;box-shadow:0 4px 16px rgba(37,211,102,0.4)">
       📲 Enviar ticket por WhatsApp
     </a>
+    <button id="btn-exito-rep" class="orp-btn lleno" onclick="repDesdeVenta()" style="display:none;width:100%;margin-top:4px">🛵 Buscar repartidor</button>
     <button class="modal-btn-c" onclick="cerrarModal('modal-exito')" style="width:100%;margin-top:4px">Cerrar</button>
   </div>
 </div>
@@ -3099,8 +3109,12 @@ cargarDatos();
           <button class="orp-chip" data-waf="aceptado" onclick="waFiltro('aceptado')">En preparación</button>
           <button class="orp-chip" data-waf="hoy" onclick="waFiltro('hoy')">Todos de hoy</button>
         </div>
-        <label class="wa-check"><input type="checkbox" id="wa-ver-sim" onchange="waVerSim=this.checked;waCargar()"> Mostrar pedidos de «Probar el bot»</label>
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+          <button class="orp-btn" onclick="repManualAbrir()">🛵 Pedir repartidor a mano</button>
+          <label class="wa-check"><input type="checkbox" id="wa-ver-sim" onchange="waVerSim=this.checked;waCargar()"> Mostrar pedidos de «Probar el bot»</label>
+        </div>
       </div>
+      <div id="rep-manual"></div>
       <div id="wa-pedidos" class="wa-grid"></div>
     </div>
 
@@ -5230,6 +5244,56 @@ function repIrAlerta(){
   waFil = 'aceptado';
   irVista('whatsapp', document.querySelector('.nav-tab[data-vista=whatsapp]'));
   waSeccion('pedidos'); waFiltro('aceptado');
+}
+
+// Pedido a domicilio que tomó el equipo a mano (por teléfono o en el chat): se busca repartidor igual que en los del bot
+function repDesdeVenta(){
+  var d = window._repVenta;
+  if (!d) { toast('Ese pedido no es a domicilio', true); return; }
+  if (!d.direccion && d.lat == null) { toast('Ese pedido no trae dirección; usa «Pedir repartidor a mano»', true); return; }
+  var b = document.getElementById('btn-exito-rep');
+  if (b) { b.disabled = true; b.textContent = 'Buscando repartidor…'; }
+  var cuerpo = {accion: 'reparto_nuevo'};
+  for (var k in d) cuerpo[k] = d[k];
+  waFn(cuerpo).then(function(r){
+    if (!r || r.ok === false) { toast((r && r.error) || 'No se pudo', true); if (b) { b.disabled = false; b.textContent = '🛵 Buscar repartidor'; } return; }
+    if (r.sin_repartidores) toast('No hay repartidores activos. Dalos de alta en WhatsApp › Repartidores', true);
+    else toast('Buscando repartidor para el pedido #' + r.pedido_id + '. Te avisamos aquí cuando alguien acepte.');
+    window._repVenta = null; cerrarModal('modal-exito'); repRevisar();
+  }).catch(function(e){ toast(e.message, true); if (b) { b.disabled = false; b.textContent = '🛵 Buscar repartidor'; } });
+}
+function repManualAbrir(){
+  var el = document.getElementById('rep-manual');
+  if (el.innerHTML) { el.innerHTML = ''; return; }
+  el.innerHTML = '<div class="orp-box" style="margin-bottom:12px"><div class="orp-box-h"><div class="orp-box-t">🛵 Pedir repartidor a mano</div></div>' +
+    '<div class="orp-box-n">Para pedidos que tomó tu equipo por teléfono o en el chat. Se le ofrece a los repartidores en orden, igual que los del bot.</div>' +
+    '<div class="wa-form" style="margin-top:10px">' +
+    '<label>Nombre del cliente<input id="rm-nombre" class="orp-inp" placeholder="Ej. Luis Lugo"></label>' +
+    '<label>WhatsApp del cliente<input id="rm-tel" class="orp-inp" placeholder="Ej. 844 123 4567"></label>' +
+    '<label>Dirección o lugar<input id="rm-dir" class="orp-inp" placeholder="Ej. Fiscalía General del Estado, o Allende 123, Centro"></label>' +
+    '<label>Referencias<input id="rm-ref" class="orp-inp" placeholder="Ej. portón blanco, preguntar por Luis"></label>' +
+    '<label>Cuánto cobra $<input id="rm-total" class="orp-inp" type="number" min="0" placeholder="Ej. 158"></label>' +
+    '<label>Pago<select id="rm-pago" class="orp-inp"><option value="efectivo">Efectivo (cobra el repartidor)</option><option value="transferencia">Transferencia ya pagada</option></select></label>' +
+    '<label>Qué lleva<input id="rm-items" class="orp-inp" placeholder="Ej. 2 chilaquiles grandes"></label>' +
+    '</div><div style="display:flex;gap:8px;margin-top:12px">' +
+    '<button class="orp-btn lleno" id="rm-btn" onclick="repManualEnviar()">Buscar repartidor</button>' +
+    '<button class="orp-btn" onclick="document.getElementById(\'rep-manual\').innerHTML=\'\'">Cancelar</button></div></div>';
+  document.getElementById('rm-nombre').focus();
+}
+function repManualEnviar(){
+  var v = function(id){ var e = document.getElementById(id); return e ? e.value.trim() : ''; };
+  if (!v('rm-dir')) { toast('Pon la dirección o el nombre del lugar', true); return; }
+  var b = document.getElementById('rm-btn'); b.disabled = true; b.textContent = 'Buscando…';
+  var pago = document.getElementById('rm-pago').value;
+  waFn({accion: 'reparto_nuevo', nombre: v('rm-nombre') || null, telefono: v('rm-tel') || null, direccion: v('rm-dir'),
+    referencias: v('rm-ref') || null, total: Number(v('rm-total')) || 0, pago: pago, pagado: pago === 'transferencia',
+    items: v('rm-items') ? [{cantidad: 1, nombre: v('rm-items')}] : []}).then(function(r){
+    if (!r || r.ok === false) { toast((r && r.error) || 'No se pudo', true); b.disabled = false; b.textContent = 'Buscar repartidor'; return; }
+    if (r.sin_repartidores) toast('No hay repartidores activos. Dalos de alta en WhatsApp › Repartidores', true);
+    else toast('Buscando repartidor para el pedido #' + r.pedido_id);
+    document.getElementById('rep-manual').innerHTML = '';
+    waCargarPedidos(); repRevisar();
+  }).catch(function(e){ toast(e.message, true); b.disabled = false; b.textContent = 'Buscar repartidor'; });
 }
 
 // ---------- Ajustes › Repartidores ----------
