@@ -3164,6 +3164,7 @@ cargarDatos();
           <label>Tiempo para recoger<input id="wa-cfg-pickup" class="orp-inp" placeholder="Ej. 20 minutos"></label>
           <label>Tiempo a domicilio<input id="wa-cfg-domicilio" class="orp-inp" placeholder="Ej. 40 a 60 minutos"></label>
           <label>Datos para transferencia<textarea id="wa-cfg-transf" class="orp-inp" rows="3" placeholder="Banco, titular y cuenta o CLABE. El bot se los manda al cliente que paga con transferencia."></textarea></label>
+          <label>Mensajes automáticos de tu app de WhatsApp<textarea id="wa-cfg-auto" class="orp-inp" rows="3" placeholder="Pega aquí el saludo automático y el mensaje de ausencia que tengas configurados en la app de WhatsApp Business (uno por renglón). Así el bot sabe que no los escribió tu equipo y no se calla."></textarea></label>
           <label>Indicaciones extra para el bot<textarea id="wa-cfg-notas" class="orp-inp" rows="3" placeholder="Ej. Los domingos no hay gorditas. Promoción: refresco a $20 con cualquier chilaquil."></textarea></label>
           <label>Cerebro del bot
             <select id="wa-cfg-modelo" class="orp-inp">
@@ -4585,6 +4586,7 @@ function waCargarCfg(llenar){
       document.getElementById('wa-cfg-domicilio').value = t('bot_tiempo_domicilio');
       document.getElementById('wa-cfg-transf').value = t('bot_transferencia');
       document.getElementById('wa-cfg-notas').value = t('bot_notas');
+      document.getElementById('wa-cfg-auto').value = t('bot_auto_textos');
       document.getElementById('wa-cfg-modelo').value = t('bot_modelo') || 'claude-sonnet-5';
       waConsumo();
     }
@@ -4915,6 +4917,7 @@ function waGuardarAjustes(){
     ['bot_horario_dias', JSON.stringify(hor.dias)], ['bot_horario', hor.texto],
     ['bot_tiempo_pickup', v('wa-cfg-pickup')], ['bot_tiempo_domicilio', v('wa-cfg-domicilio')],
     ['bot_transferencia', v('wa-cfg-transf')], ['bot_notas', v('wa-cfg-notas')], ['bot_modelo', v('wa-cfg-modelo')],
+    ['bot_auto_textos', v('wa-cfg-auto')],
     ['bot_probadores', v('wa-cfg-probadores')]
   ];
   var activo = Number(document.getElementById('wa-cfg-activo').value) || 0;
