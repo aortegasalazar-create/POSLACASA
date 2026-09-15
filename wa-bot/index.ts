@@ -415,7 +415,7 @@ async function claude(system: any[], messages: any[], modelo: string) {
   const r = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: { "x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
-    body: JSON.stringify({ model: modelo, max_tokens: 800, system, messages, tools: TOOLS }),
+    body: JSON.stringify({ model: modelo, max_tokens: 2000, system, messages, tools: TOOLS }),
   });
   const j = await r.json();
   if (!r.ok) throw new Error(`Claude ${r.status}: ${JSON.stringify(j).slice(0, 300)}`);
@@ -469,6 +469,18 @@ async function atender(tel: string, nombre: string, texto: string, extra: { lat?
   const probadores = listaTels(c.bot_probadores?.texto);
   if (!extra.simulado && !(modoBot === 1 || (modoBot === 2 && probadores.includes(diez(tel))))) return { ok: true, apagado: true };
   if (chat?.modo === "equipo" && chat.pausado_hasta && new Date(chat.pausado_hasta) > new Date()) return { ok: true, con_equipo: true };
+
+  // Otro bot del otro lado (mensajes automáticos idénticos una y otra vez): no seguirle el juego
+  const { data: previos } = await sb.from("wa_mensajes").select("texto").eq("telefono", tel).eq("rol", "cliente")
+    .lt("id", miId).order("id", { ascending: false }).limit(2);
+  const iguales = (previos ?? []).filter((m: any) => (m.texto ?? "").trim() === texto.trim()).length;
+  if (texto.trim().length > 15 && iguales >= 2) {
+    if (chat?.modo !== "equipo") {
+      await sb.from("wa_chats").update({ modo: "equipo", pausado_hasta: new Date(Date.now() + 2 * 3600 * 1000).toISOString() }).eq("telefono", tel);
+      await sb.from("wa_mensajes").insert({ telefono: tel, rol: "sistema", texto: "Pasado al equipo: del otro lado contestan mensajes automáticos repetidos (parece otro bot)." });
+    }
+    return { ok: true, bucle: true };
+  }
 
   // 2) si llegan varios mensajes seguidos, contesta solo al último (con todo el contexto)
   await new Promise((r) => setTimeout(r, extra.simulado ? 200 : 2500));
@@ -695,6 +707,16 @@ function leerMensaje(m: any): { texto: string; lat?: number; lng?: number } {
   }
 }
 
+// Textos que la app de WhatsApp Business manda sola (saludo, ausencia). Se configuran en el POS.
+const sinAcentos = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/\s+/g, " ").trim();
+async function esAutomatico(texto: string) {
+  const c = await config();
+  const lista = (c.bot_auto_textos?.texto ?? "").split(/\n+/).map((x) => sinAcentos(x)).filter((x) => x.length > 12);
+  if (!lista.length) return false;
+  const t = sinAcentos(texto);
+  return lista.some((a) => t.startsWith(a.slice(0, 40)) || a.startsWith(t.slice(0, 40)));
+}
+
 async function procesarWebhook(body: any) {
   const trabajos: Promise<unknown>[] = [];
   const fallidos: string[] = [];
@@ -705,8 +727,12 @@ async function procesarWebhook(body: any) {
     // Lo que escribe el equipo desde la app del celular (coexistencia): el bot se calla 30 min en ese chat
     for (const m of v?.message_echoes ?? []) {
       const tel = m.to;
+      const texto = m.text?.body ?? `[${m.type}]`;
       trabajos.push((async () => {
-        await sb.from("wa_mensajes").insert({ telefono: tel, rol: "equipo", texto: m.text?.body ?? `[${m.type}]`, wa_id: m.id }).then(() => {});
+        await sb.from("wa_mensajes").insert({ telefono: tel, rol: "equipo", texto, wa_id: m.id }).then(() => {});
+        // El saludo automático de la app de WhatsApp Business NO es alguien del equipo: si lo tomamos como tal,
+        // el bot se calla 30 min en cada chat nuevo y nunca alcanza a atender.
+        if (await esAutomatico(texto)) return;
         await sb.from("wa_chats").upsert({ telefono: tel, modo: "equipo", pausado_hasta: new Date(Date.now() + 30 * 60 * 1000).toISOString() });
       })());
     }
