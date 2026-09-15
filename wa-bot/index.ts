@@ -760,8 +760,17 @@ async function procesarWebhook(body: any) {
       trabajos.push((async () => {
         // ¿Es un repartidor contestando una oferta? Entonces no va al bot de pedidos
         if (await mensajeRepartidor(m.from, l.texto, payload, m.id ?? null).catch((e) => { console.error("reparto", e); return false; })) return;
-        if (m.type === "image") await marcarComprobante(m.from);
-        await atender(m.from, nombres[m.from] ?? "", l.texto, { lat: l.lat, lng: l.lng, wa_id: m.id });
+        let extraTexto = "";
+        if (m.type === "image") {
+          await marcarComprobante(m.from);
+          const rev = m.image?.id ? await revisarComprobante(m.from, m.image.id).catch((e) => { console.error("comprobante", e); return null; }) : null;
+          if (rev && !("error" in rev)) {
+            extraTexto = rev.ok
+              ? ` [El bot ya revisó el comprobante y CUADRA con el pedido #${rev.p?.id} (${(rev.oks ?? []).join(", ")}): el pedido quedó marcado como PAGADO. Dale las gracias y confírmale que ya quedó registrado su pago.]`
+              : ` [El bot revisó el comprobante y NO pudo darlo por bueno: ${(rev.fallas ?? []).join("; ")}. NO le digas que está mal ni lo acuses: dile con amabilidad que su comprobante ya lo está confirmando alguien del equipo en un momento. No marques nada como pagado.]`;
+          }
+        }
+        await atender(m.from, nombres[m.from] ?? "", l.texto + extraTexto, { lat: l.lat, lng: l.lng, wa_id: m.id });
       })().catch((e) => console.error("atender", e)));
     }
     for (const st of v?.statuses ?? []) if (st.status === "failed" && st.id) fallidos.push(st.id);
@@ -775,6 +784,142 @@ async function marcarComprobante(tel: string) {
   const { data } = await sb.from("wa_pedidos").select("id,notas").eq("telefono", tel).eq("pago", "transferencia").gte("creado", desde)
     .order("id", { ascending: false }).limit(1);
   if (data?.[0]) await sb.from("wa_pedidos").update({ notas: [data[0].notas, "📎 Mandó comprobante por WhatsApp"].filter(Boolean).join(" · ") }).eq("id", data[0].id);
+}
+
+// ---------- comprobantes de transferencia ----------
+// El cliente manda la foto de su transferencia; el bot la lee y la compara contra el pedido:
+// monto, fecha y hora, titular de la cuenta y últimos dígitos. Si todo cuadra, marca el pedido como pagado.
+// Nunca "adivina": lo que no cuadra se lo deja al equipo con el motivo.
+type Comprobante = {
+  es_comprobante: boolean; banco: string | null; monto: number | null; fecha: string | null; hora: string | null;
+  beneficiario: string | null; cuenta_final: string | null; referencia: string | null; estado: string | null; dudas: string | null;
+};
+const limpiaNom = (t: string) => sinAcentos(t).replace(/[^a-z ]/g, " ").split(/\s+/).filter((x) => x.length > 2 && !["sra", "sr", "lic", "mr"].includes(x));
+
+async function bajarMedia(id: string): Promise<{ base64: string; mime: string } | null> {
+  try {
+    const h = { "D360-API-KEY": D360_KEY };
+    const r1 = await fetch(`${D360_BASE}/${id}`, { headers: h });
+    if (!r1.ok) { console.error("media url", r1.status, (await r1.text()).slice(0, 200)); return null; }
+    const j = await r1.json();
+    const url = String(j.url ?? "").replace("https://lookaside.fbsbx.com", D360_BASE);
+    if (!url) return null;
+    const r2 = await fetch(url, { headers: h });
+    if (!r2.ok) { console.error("media bin", r2.status); return null; }
+    const buf = new Uint8Array(await r2.arrayBuffer());
+    let bin = "";
+    for (let i = 0; i < buf.length; i += 8192) bin += String.fromCharCode(...buf.subarray(i, i + 8192));
+    return { base64: btoa(bin), mime: j.mime_type ?? "image/jpeg" };
+  } catch (e) { console.error("bajarMedia", e); return null; }
+}
+
+async function leerComprobante(base64: string, mime: string, modelo: string): Promise<Comprobante | null> {
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+    body: JSON.stringify({
+      model: modelo, max_tokens: 700,
+      system: "Lees comprobantes de transferencia bancaria mexicanos (SPEI, transferencias entre cuentas). Contestas SOLO un JSON, sin explicaciones.",
+      messages: [{
+        role: "user", content: [
+          { type: "image", source: { type: "base64", media_type: mime, data: base64 } },
+          { type: "text", text: `Devuelve SOLO este JSON:
+{"es_comprobante":true|false,"banco":texto|null,"monto":número|null,"fecha":"AAAA-MM-DD"|null,"hora":"HH:MM"|null,"beneficiario":texto|null,"cuenta_final":"últimos 4 dígitos de la cuenta/CLABE/tarjeta destino"|null,"referencia":texto|null,"estado":"lo que diga el comprobante, ej. Completada/Exitosa/En proceso"|null,"dudas":"qué se ve raro o editado, o null"}
+Reglas: el monto en número sin símbolos. Si el año no aparece, usa el año en curso. Si solo ves parte de la cuenta, pon los últimos 4 dígitos que se vean. Si la imagen no es un comprobante de transferencia (es comida, una foto cualquiera, etc.) pon es_comprobante:false y lo demás null.` },
+        ],
+      }],
+    }),
+  });
+  if (!r.ok) { console.error("vision", r.status, (await r.text()).slice(0, 200)); return null; }
+  const j = await r.json();
+  const txt = (j.content ?? []).filter((b: any) => b.type === "text").map((b: any) => b.text).join("").trim();
+  const m = txt.match(/\{[\s\S]*\}/);
+  if (!m) return null;
+  try { return JSON.parse(m[0]) as Comprobante; } catch (_) { return null; }
+}
+
+async function sha256(b64: string) {
+  const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+  const h = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(h)].map((x) => x.toString(16).padStart(2, "0")).join("");
+}
+
+// Revisa el comprobante contra el pedido. Regresa qué cuadró y qué no.
+async function revisarComprobante(tel: string, mediaId: string) {
+  const c = await config();
+  if (Number(c.bot_pago_auto?.valor ?? 1) === 0) return null; // validación automática apagada
+  const desde = new Date(Date.now() - 12 * 3600 * 1000).toISOString();
+  const { data: peds } = await sb.from("wa_pedidos").select("*").eq("telefono", tel).eq("pago", "transferencia")
+    .gte("creado", desde).is("pedido_padre", null).order("id", { ascending: false }).limit(1);
+  const p = peds?.[0];
+  const media = await bajarMedia(mediaId);
+  if (!media) return { error: "No pude abrir la imagen" };
+  const modelo = (c.bot_modelo?.texto || "claude-sonnet-5").trim();
+  const cmp = await leerComprobante(media.base64, media.mime, modelo);
+  if (!cmp) return { error: "No pude leer la imagen" };
+  const hash = await sha256(media.base64);
+  if (!cmp.es_comprobante) return { p, cmp, ok: false, fallas: ["La imagen no parece un comprobante de transferencia"], hash };
+
+  const fallas: string[] = [];
+  const oks: string[] = [];
+  // monto contra el total del pedido completo
+  if (p) {
+    const { total } = await pedidoCompleto(p);
+    if (cmp.monto == null) fallas.push("no se ve el monto");
+    else if (Math.abs(Number(cmp.monto) - total) <= 1) oks.push(`monto ${dinero(Number(cmp.monto))}`);
+    else fallas.push(`el monto es ${dinero(Number(cmp.monto))} y el pedido es ${dinero(total)}`);
+  } else if (cmp.monto != null) oks.push(`monto ${dinero(Number(cmp.monto))}`);
+
+  // fecha y hora: hoy y cerca de la conversación
+  const { dia: _d, hm } = ahoraPartes();
+  const hoy = new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  if (cmp.fecha && cmp.fecha !== hoy) fallas.push(`la fecha del comprobante es ${cmp.fecha} y hoy es ${hoy}`);
+  else if (cmp.fecha) oks.push("fecha de hoy");
+  const tol = Number(c.bot_pago_minutos?.valor ?? 120) || 120;
+  if (cmp.hora && /^\d{1,2}:\d{2}$/.test(cmp.hora)) {
+    const min = (t: string) => Number(t.split(":")[0]) * 60 + Number(t.split(":")[1]);
+    const dif = Math.abs(min(hm) - min(cmp.hora));
+    if (dif <= tol || dif >= 1440 - tol) oks.push(`hora ${cmp.hora}`);
+    else fallas.push(`la hora del comprobante (${cmp.hora}) no es de hace rato (ahorita son las ${hm})`);
+  }
+  // titular y cuenta
+  const titular = (c.bot_pago_titular?.texto ?? "").trim();
+  if (titular) {
+    const esperado = limpiaNom(titular), visto = limpiaNom(cmp.beneficiario ?? "");
+    const coinciden = esperado.filter((x) => visto.includes(x)).length;
+    if (!cmp.beneficiario) fallas.push("no se ve a nombre de quién va");
+    else if (coinciden >= Math.min(2, esperado.length)) oks.push(`a nombre de ${cmp.beneficiario}`);
+    else fallas.push(`va a nombre de «${cmp.beneficiario}» y la cuenta es de «${titular}»`);
+  }
+  const cuenta4 = (c.bot_pago_cuenta4?.texto ?? "").replace(/\D/g, "").slice(-4);
+  if (cuenta4) {
+    const visto = (cmp.cuenta_final ?? "").replace(/\D/g, "").slice(-4);
+    if (!visto) fallas.push("no se ve la cuenta destino");
+    else if (visto === cuenta4) oks.push(`cuenta •${cuenta4}`);
+    else fallas.push(`la cuenta destino termina en ${visto} y la tuya en ${cuenta4}`);
+  }
+  if (cmp.estado && /proceso|pendiente|rechaz|cancel/i.test(cmp.estado)) fallas.push(`el comprobante dice «${cmp.estado}»`);
+  if (cmp.dudas) fallas.push(String(cmp.dudas));
+  // ¿ya habían mandado esta misma imagen?
+  const { data: repes } = await sb.from("wa_pedidos").select("id,telefono").contains("comprobante", { hash }).limit(2)
+    .then((r: any) => r, () => ({ data: [] }));
+  const repetido = (repes ?? []).filter((x: any) => !p || x.id !== p.id);
+  if (repetido.length) fallas.push(`esta misma imagen ya se usó en el pedido #${repetido[0].id}`);
+
+  const ok = fallas.length === 0 && !!p;
+  const datos = { ...cmp, hash, ok, fallas, revisado: new Date().toISOString() };
+  if (p) {
+    const cambio: Record<string, unknown> = { pagado: ok ? true : p.pagado,
+      notas: [p.notas, ok ? `✅ Comprobante validado por el bot (${oks.join(", ")})` : `📎 Comprobante por revisar: ${fallas.join("; ")}`].filter(Boolean).join(" · ") };
+    const up = await sb.from("wa_pedidos").update({ ...cambio, comprobante: datos }).eq("id", p.id);
+    if (up.error) await sb.from("wa_pedidos").update(cambio).eq("id", p.id); // por si la columna comprobante aún no existe
+    await sb.from("wa_mensajes").insert({ telefono: tel, rol: "sistema", texto: ok
+      ? `✅ Pago validado por el bot para el pedido #${p.id}: ${oks.join(", ")}`
+      : `⚠️ Comprobante del pedido #${p.id} SIN validar: ${fallas.join("; ")}` });
+  } else {
+    await sb.from("wa_mensajes").insert({ telefono: tel, rol: "sistema", texto: `📎 Mandó un comprobante y no tiene pedido por cobrar: ${fallas.length ? fallas.join("; ") : "revísalo el equipo"}` });
+  }
+  return { p, cmp, ok, fallas, oks, hash };
 }
 
 // ---------- reparto a domicilio ----------
