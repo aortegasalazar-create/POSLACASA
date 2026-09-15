@@ -372,7 +372,7 @@ function estadoHorario(c: Awaited<ReturnType<typeof config>>) {
   return { abierto, resumen: resumenHorario(dias), proxima, cierra: hoy?.cierra ?? null };
 }
 
-function reglas(c: Awaited<ReturnType<typeof config>>, reciente: string, promosTxt = "") {
+function reglas(c: Awaited<ReturnType<typeof config>>, reciente: string, promosTxt = "", equipoReciente = false) {
   const t = (k: string) => (c[k]?.texto ?? "").trim();
   const hz = estadoHorario(c);
   return `Eres quien toma los pedidos por WhatsApp de una cocina en Saltillo que tiene dos marcas: LA CASA DEL CHILAQUIL (chilaquiles) y DELIGORDAS (gorditas). Es la misma cocina: en un solo pedido pueden venir productos de las dos.
@@ -406,7 +406,12 @@ CÓMO ATIENDES
 - Si algo no está claro o no lo sabes, pregunta o usa pasar_a_humano. Nunca prometas algo que no está aquí.
 - Si te escriben algo que no tiene que ver con pedidos, contesta breve y amable y regresa al pedido.
 
-${promosTxt ? "PROMOCIONES VIGENTES (se aplican solas en revisar_pedido; no inventes otras):\n" + promosTxt + "\n- OBLIGATORIO: si el pedido ya trae parte de un combo pero le falta lo demás (ej. pidió chilaquiles grandes y no lleva Coca), en el mensaje donde muestras el resumen agrega ANTES de preguntar si es correcto una línea como: «🎁 Si le agregas una Coca queda en combo y solo pagas $X más (ahorras $Y)». X = precio normal de lo que falta − ahorro del combo. Solo una vez por pedido; si dice que no, no insistas.\n- En el resumen muestra cada promoción aplicada con su descuento, como te la regresa revisar_pedido.\n" : ""}${reciente ? "PEDIDO RECIENTE DE ESTE CLIENTE:\n" + reciente + "\n" : ""}
+${promosTxt ? "PROMOCIONES VIGENTES (se aplican solas en revisar_pedido; no inventes otras):\n" + promosTxt + "\n- OBLIGATORIO: si el pedido ya trae parte de un combo pero le falta lo demás (ej. pidió chilaquiles grandes y no lleva Coca), en el mensaje donde muestras el resumen agrega ANTES de preguntar si es correcto una línea como: «🎁 Si le agregas una Coca queda en combo y solo pagas $X más (ahorras $Y)». X = precio normal de lo que falta − ahorro del combo. Solo una vez por pedido; si dice que no, no insistas.\n- En el resumen muestra cada promoción aplicada con su descuento, como te la regresa revisar_pedido.\n" : ""}${equipoReciente ? `ALGUIEN DEL EQUIPO YA ESCRIBIÓ EN ESTE CHAT (lo ves como «[Mensaje del equipo de la cocina]»).
+- Sigues al pendiente: si el cliente hace una petición NUEVA (quiere pedir, agregar algo, saber el envío, otra pregunta que puedas resolver), atiéndela normal.
+- No repitas ni contradigas lo que ya dijo el equipo, ni vuelvas a saludar; continúa la conversación donde va.
+- Si el cliente solo está contestando algo que el equipo le preguntó, o el tema lo está resolviendo el equipo (una queja, un problema con un pedido, un cobro, un reclamo, algo que ya quedó cerrado), NO escribas nada: contesta EXACTAMENTE «[CALLAR]» y nada más.
+- Si dudas entre hablar o callarte cuando el tema es delicado, cállate: contesta «[CALLAR]».
+` : ""}${reciente ? "PEDIDO RECIENTE DE ESTE CLIENTE:\n" + reciente + "\n" : ""}
 MENÚ (ids entre corchetes; los precios son exactos):`;
 }
 
@@ -492,8 +497,11 @@ async function atender(tel: string, nombre: string, texto: string, extra: { lat?
   const menu = await cargarMenu(excluir);
   const reciente = await pedidoReciente(tel);
   const promos = await cargarPromos();
+  const desde2h = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
+  const { data: delEquipo } = await sb.from("wa_mensajes").select("id").eq("telefono", tel).eq("rol", "equipo").gte("creado", desde2h).limit(1);
+  const equipoReciente = !!delEquipo?.length;
   const system = [
-    { type: "text", text: reglas(c, reciente, promosTexto(promos, menu)) },
+    { type: "text", text: reglas(c, reciente, promosTexto(promos, menu), equipoReciente) },
     { type: "text", text: menuTexto(menu), cache_control: { type: "ephemeral" } },
   ];
   const modelo = (c.bot_modelo?.texto || "claude-haiku-4-5-20251001").trim();
@@ -515,6 +523,10 @@ async function atender(tel: string, nombre: string, texto: string, extra: { lat?
       resultados.push({ type: "tool_result", tool_use_id: b.id, content: JSON.stringify(out) });
     }
     messages.push({ role: "user", content: resultados });
+  }
+  if (/^\s*\[?callar\]?\s*$/i.test(respuesta)) { // el equipo lleva la conversación: no escribimos nada
+    await sb.from("wa_mensajes").insert({ telefono: tel, rol: "sistema", texto: "El bot se mantuvo callado: lo está atendiendo el equipo." });
+    return { ok: true, callado: true, tokens: { entrada: tin, salida: tout }, modelo };
   }
   if (!respuesta) respuesta = "Dame un momento, te atiende alguien del equipo 🙌";
   respuesta = respuesta.replace(/\*\*(.+?)\*\*/g, "*$1*").replace(/^#+\s*/gm, ""); // formato de WhatsApp
@@ -733,7 +745,8 @@ async function procesarWebhook(body: any) {
         // El saludo automático de la app de WhatsApp Business NO es alguien del equipo: si lo tomamos como tal,
         // el bot se calla 30 min en cada chat nuevo y nunca alcanza a atender.
         if (await esAutomatico(texto)) return;
-        await sb.from("wa_chats").upsert({ telefono: tel, modo: "equipo", pausado_hasta: new Date(Date.now() + 30 * 60 * 1000).toISOString() });
+        const min = Number((await config()).bot_pausa_minutos?.valor ?? 3) || 3;
+        await sb.from("wa_chats").upsert({ telefono: tel, modo: "equipo", pausado_hasta: new Date(Date.now() + min * 60 * 1000).toISOString() });
       })());
     }
     if (field && field !== "messages" && !v?.messages) continue;
