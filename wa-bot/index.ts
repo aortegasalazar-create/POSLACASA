@@ -231,6 +231,17 @@ async function buscarLugar(texto: string): Promise<{ lat: number; lng: number; d
   return { lat: r.geometry.location.lat, lng: r.geometry.location.lng, direccion: r.formatted_address, via: "geocode" };
 }
 
+// Cuando el cliente manda su ubicación 📍, la volvemos calle y colonia (para el POS, el ticket y el repartidor)
+async function direccionDeCoords(lat: number, lng: number) {
+  if (!GMAPS_KEY) return "";
+  try {
+    const u = `https://maps.googleapis.com/maps/api/geocode/json?latlng=${lat},${lng}&language=es&key=${GMAPS_KEY}`;
+    const g = await (await fetch(u)).json();
+    const r = (g.results ?? []).find((x: any) => (x.types ?? []).includes("street_address")) ?? g.results?.[0];
+    return r?.formatted_address ?? "";
+  } catch (e) { console.error("reverse", e); return ""; }
+}
+
 async function cotizarEnvio(direccion: string | undefined, lat?: number, lng?: number) {
   let dLat = lat, dLng = lng, formateada = direccion ?? "", lugar: string | undefined;
   if ((dLat == null || dLng == null) && direccion && GMAPS_KEY) {
@@ -249,6 +260,10 @@ async function cotizarEnvio(direccion: string | undefined, lat?: number, lng?: n
         if (!formateada) formateada = d.routes[0].legs[0].end_address;
       }
     } catch (_) { /* se queda la aproximación */ }
+  }
+  if (!formateada || /ubicaci[oó]n/i.test(formateada)) {
+    const rev = await direccionDeCoords(dLat, dLng);
+    if (rev) formateada = rev;
   }
   const enZona = !formateada || ZONA.test(formateada);
   return { ok: true, lugar, direccion: formateada, lat: dLat, lng: dLng, km: Math.round(km * 10) / 10, envio: costoEnvio(km), metodo, en_zona: enZona,
@@ -391,6 +406,7 @@ ${t("bot_notas") ? "Indicaciones del dueño: " + t("bot_notas") : ""}
 
 CÓMO ATIENDES
 - Escribe como en WhatsApp: corto, cálido, natural, español de México. Nada de párrafos largos ni listas enormes. En WhatsApp las negritas llevan UN solo asterisco (*así*), nunca dos. Úsalas solo para el resumen y el total. Uno o dos emojis como mucho.
+- Si el cliente ya te dijo su nombre (aunque sea de pasada, «a nombre de Sam»), NO se lo vuelvas a pedir: úsalo.
 - Pide solo lo que falta, en una sola pregunta cuando se pueda. No repitas lo que el cliente ya dijo ni le enlistes los toppings incluidos.
 - Entiende lo que pide aunque lo escriba informal ("unas chilas verdes con pollo", "2 gorditas de chicharrón"). Tradúcelo a productos y opciones del MENÚ con sus ids.
 - Solo vende lo que está en el MENÚ, con esos nombres. Nunca inventes productos, precios, promociones ni tiempos. "Chilas" = chilaquiles. "Chilaquiles" a secas = Chilaquiles Grandes ($118); los chicos son Mini Chilaquiles.
@@ -792,7 +808,7 @@ async function marcarComprobante(tel: string) {
 // Nunca "adivina": lo que no cuadra se lo deja al equipo con el motivo.
 type Comprobante = {
   es_comprobante: boolean; banco: string | null; monto: number | null; fecha: string | null; hora: string | null;
-  beneficiario: string | null; cuenta_final: string | null; referencia: string | null; estado: string | null; dudas: string | null;
+  beneficiario: string | null; cuenta_final: string | null; referencia: string | null; estado: string | null; alteraciones: string | null;
 };
 const limpiaNom = (t: string) => sinAcentos(t).replace(/[^a-z ]/g, " ").split(/\s+/).filter((x) => x.length > 2 && !["sra", "sr", "lic", "mr"].includes(x));
 
@@ -824,7 +840,7 @@ async function leerComprobante(base64: string, mime: string, modelo: string): Pr
         role: "user", content: [
           { type: "image", source: { type: "base64", media_type: mime, data: base64 } },
           { type: "text", text: `Devuelve SOLO este JSON:
-{"es_comprobante":true|false,"banco":texto|null,"monto":número|null,"fecha":"AAAA-MM-DD"|null,"hora":"HH:MM"|null,"beneficiario":texto|null,"cuenta_final":"últimos 4 dígitos de la cuenta/CLABE/tarjeta destino"|null,"referencia":texto|null,"estado":"lo que diga el comprobante, ej. Completada/Exitosa/En proceso"|null,"dudas":"qué se ve raro o editado, o null"}
+{"es_comprobante":true|false,"banco":texto|null,"monto":número|null,"fecha":"AAAA-MM-DD"|null,"hora":"HH:MM"|null,"beneficiario":texto|null,"cuenta_final":"últimos 4 dígitos de la cuenta/CLABE/tarjeta destino"|null,"referencia":texto|null,"estado":"lo que diga el comprobante, ej. Completada/Exitosa/En proceso"|null,"alteraciones":"SOLO si la imagen se ve editada o montada (tipografías distintas, recortes, números encimados). Las leyendas normales de los bancos (por ejemplo «Dato no verificado por la institución») NO son alteraciones: en ese caso pon null"}
 Reglas: el monto en número sin símbolos. Si el año no aparece, usa el año en curso. Si solo ves parte de la cuenta, pon los últimos 4 dígitos que se vean. Si la imagen no es un comprobante de transferencia (es comida, una foto cualquiera, etc.) pon es_comprobante:false y lo demás null.` },
         ],
       }],
@@ -887,8 +903,9 @@ async function revisarComprobante(tel: string, mediaId: string) {
   if (titular) {
     const esperado = limpiaNom(titular), visto = limpiaNom(cmp.beneficiario ?? "");
     const coinciden = esperado.filter((x) => visto.includes(x)).length;
-    if (!cmp.beneficiario) fallas.push("no se ve a nombre de quién va");
-    else if (coinciden >= Math.min(2, esperado.length)) oks.push(`a nombre de ${cmp.beneficiario}`);
+    const sinNombre = !cmp.beneficiario || /no verificad|verificad[oa] por|sin dato|no disponible/i.test(cmp.beneficiario);
+    if (coinciden >= Math.min(2, esperado.length)) oks.push(`a nombre de ${cmp.beneficiario}`);
+    else if (sinNombre) oks.push("el banco no muestra el nombre del beneficiario (se revisa por la cuenta)");
     else fallas.push(`va a nombre de «${cmp.beneficiario}» y la cuenta es de «${titular}»`);
   }
   const cuenta4 = (c.bot_pago_cuenta4?.texto ?? "").replace(/\D/g, "").slice(-4);
@@ -899,7 +916,8 @@ async function revisarComprobante(tel: string, mediaId: string) {
     else fallas.push(`la cuenta destino termina en ${visto} y la tuya en ${cuenta4}`);
   }
   if (cmp.estado && /proceso|pendiente|rechaz|cancel/i.test(cmp.estado)) fallas.push(`el comprobante dice «${cmp.estado}»`);
-  if (cmp.dudas) fallas.push(String(cmp.dudas));
+  const alt = String(cmp.alteraciones ?? "").trim();
+  if (alt && !/no verificad|verificad[oa] por|informativ|null/i.test(alt)) fallas.push(alt);
   // ¿ya habían mandado esta misma imagen?
   const { data: repes } = await sb.from("wa_pedidos").select("id,telefono").contains("comprobante", { hash }).limit(2)
     .then((r: any) => r, () => ({ data: [] }));
