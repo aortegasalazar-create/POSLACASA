@@ -3085,6 +3085,7 @@ cargarDatos();
 <!-- VISTA CORTE DE CAJA (ORP) -->
 <div id="wa-alerta" class="wa-alerta" hidden onclick="waIrAlerta()"></div>
 <div id="rep-alerta" class="wa-alerta rep-alerta" hidden onclick="repIrAlerta()"></div>
+<div id="wa-alerta-equipo" class="wa-alerta" style="top:140px;background:#b45309" hidden onclick="waIrAlertaEquipo()"></div>
 <div class="vista" id="vista-whatsapp">
   <div class="orp-page">
     <div class="orp-top">
@@ -4572,6 +4573,27 @@ function waRevisar(){
     if (v && v.classList.contains('active') && (waSec === 'pedidos' || waSec === 'chats')) waCargar();
   }).catch(function(){});
 }
+// ---------- aviso cuando el bot pide apoyo y pasa un chat al equipo ----------
+var waUltimoSis = null;
+function waRevisarEquipo(){
+  sbFetch('wa_mensajes?rol=eq.sistema&texto=ilike.Pasado%20al%20equipo*&select=id,telefono,creado&order=id.desc&limit=5').then(function(r){
+    if (!r || !r.length) return;
+    var top = r[0];
+    if (waUltimoSis === null) { waUltimoSis = top.id; return; }
+    if (top.id <= waUltimoSis) return;
+    waUltimoSis = top.id;
+    if (Date.now() - new Date(top.creado).getTime() > 300000) return;
+    waSonar();
+    toast('\u{1F64B} El bot pidi\u00f3 apoyo en un chat');
+    var el = document.getElementById('wa-alerta-equipo');
+    if (el) { el.innerHTML = '\u{1F64B} <b>El bot pidi\u00f3 apoyo en un chat</b><span>Ver chat</span>'; el.hidden = false; }
+  }).catch(function(){});
+}
+function waIrAlertaEquipo(){
+  var el = document.getElementById('wa-alerta-equipo'); if (el) el.hidden = true;
+  irVista('whatsapp', document.querySelector('.nav-tab[data-vista=whatsapp]'));
+  waSeccion('chats');
+}
 function waIrAlerta(){
   waFil = 'nuevo';
   irVista('whatsapp', document.querySelector('.nav-tab[data-vista=whatsapp]'));
@@ -4580,6 +4602,7 @@ function waIrAlerta(){
 function waIniciar(){
   if (window._waIniciado) return; window._waIniciado = true;
   waRevisar(); setInterval(waRevisar, 10000);
+  waRevisarEquipo(); setInterval(waRevisarEquipo, 10000);
   waCargarCfg();
 }
 
