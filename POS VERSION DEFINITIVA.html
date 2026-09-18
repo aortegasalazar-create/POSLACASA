@@ -1577,7 +1577,7 @@ function procesarVenta() {
     }).then(function(){
       if(mesaId) return sbFetch('mesas?id=eq.'+mesaId,'PATCH',{estado:'libre'});
     }).then(function(){
-      if(cliId){ var c=clientes.find(function(x){return x.id==cliId;}); if(c){ var mpp=lealtadConfig.monto_por_punto||10; var ppm=lealtadConfig.puntos_por_monto||1; c.puntos=(c.puntos||0)+Math.floor(v.total/mpp)*ppm; return sbFetch('clientes?id=eq.'+cliId,'PATCH',{puntos:c.puntos});} }
+      if(cliId){ var c=clientes.find(function(x){return x.id==cliId;}); if(c){ var mpp=lealtadConfig.monto_por_punto||10; var ppm=lealtadConfig.puntos_por_monto||1; var ptsGanados=Math.floor(v.total/mpp)*ppm; var ptsCanjeados=canjeActivo||0; c.puntos=Math.max(0,(c.puntos||0)-ptsCanjeados)+ptsGanados; return sbFetch('clientes?id=eq.'+cliId,'PATCH',{puntos:c.puntos});} }
     }).then(function(){
       var tp=document.getElementById('ticket-print');
       var tl2={local:'En mesa',para_llevar:'Para llevar',delivery:'Delivery'};
@@ -2413,9 +2413,27 @@ function loadLealtadConfig() {
   if(saved) try { lealtadConfig = Object.assign(lealtadConfig, JSON.parse(saved)); } catch(e){}
 }
 
+// La configuracion de lealtad vive en Supabase (config_orp.lealtad_config) para que sea
+// la misma en cualquier computadora. localStorage queda solo como copia local de arranque.
+function cargarLealtadRemoto() {
+  return sbFetch('config_orp?clave=eq.lealtad_config&select=texto').then(function(r){
+    if (r && r.length && r[0].texto) {
+      try {
+        lealtadConfig = Object.assign(lealtadConfig, JSON.parse(r[0].texto));
+        localStorage.setItem('lealtad_config', JSON.stringify(lealtadConfig));
+      } catch(e){}
+    }
+    return lealtadConfig;
+  }).catch(function(){ return lealtadConfig; });
+}
+
 function saveLealtadConfig() {
   localStorage.setItem('lealtad_config', JSON.stringify(lealtadConfig));
-  toast('✅ Configuración guardada');
+  sbPost('config_orp?on_conflict=clave', 'POST',
+    [{clave: 'lealtad_config', texto: JSON.stringify(lealtadConfig), actualizado: new Date().toISOString()}],
+    'resolution=merge-duplicates,return=minimal')
+    .then(function(){ toast('✅ Configuracion guardada en todas las computadoras'); })
+    .catch(function(e){ toast('Se guardo solo en esta computadora: ' + e.message, true); });
 }
 
 function switchCliTab(tab, btn) {
@@ -2971,6 +2989,7 @@ setTimeout(ajustarAlturaTicket, 300);
 if(typeof google !== 'undefined') initDeliverySearch();
 else window.initDeliverySearchOnLoad = function(){ initDeliverySearch(); };
 cargarLoyalty();
+cargarLealtadRemoto();
 cargarDatos();
 // Inicializar filtros de reportes con hoy
 (function(){
