@@ -3318,7 +3318,7 @@ cargarDatos();
           <button class="orp-chip" onclick="document.getElementById('plat-actualizar').style.display='none'">Cerrar</button>
         </div>
       </div>
-      <div class="orp-box-n" style="margin:0 0 8px">Lo hace el robot del panel ORP de tu Mac: Uber y Rappi con sus ventanas, y DiDi en tu propio Chrome con tu sesión (se abre una pestaña de DiDi y se cierra sola). Ayer y hoy; lo que ya estaba no se duplica.</div>
+      <div class="orp-box-n" style="margin:0 0 8px">Lo hace el robot del panel ORP de tu Mac: Uber y Rappi con sus ventanas, y DiDi en tu propio Chrome con tu sesión (se abre una pestaña de DiDi y se cierra sola). Trae el periodo que tengas elegido en el calendario de arriba; lo que ya estaba no se duplica.</div>
       <div id="plat-act-estado" style="font-size:13px;line-height:1.6;min-height:20px;white-space:pre-line"></div>
     </div>
     <div class="orp-cards" id="plat-kpis"></div>
@@ -4070,9 +4070,18 @@ function platActualizarPanel(plat) {
   document.getElementById('plat-actualizar').style.display = '';
   var el = document.getElementById('plat-act-estado');
   var nom = {todas: 'Uber, Rappi y DiDi', uber: 'Uber', rappi: 'Rappi', didi: 'DiDi'}[plat];
-  el.style.color = 'var(--gris)'; el.textContent = 'Conectando con el panel ORP de tu Mac…';
+  // Periodo = lo que esté en el calendario de la pestaña Plataformas (si está vacío: ayer y hoy)
+  var hoyP = hoyLocal();
+  var dIni = document.getElementById('plat-ini').value || platSumarDias(hoyP, -1);
+  var dFin = document.getElementById('plat-fin').value || hoyP;
+  if (dFin > hoyP) dFin = hoyP;
+  if (dIni > dFin) dIni = dFin;
+  var fmtP = function(ymd){ return new Date(ymd + 'T12:00:00').toLocaleDateString('es-MX', {weekday: 'short', day: 'numeric', month: 'short'}); };
+  var periodoTxt = dIni === dFin ? fmtP(dIni) : fmtP(dIni) + ' al ' + fmtP(dFin);
+  nom += ' · ' + periodoTxt;
+  el.style.color = 'var(--gris)'; el.textContent = 'Conectando con el panel ORP de tu Mac… (' + periodoTxt + ')';
   fetch(ORP_PANEL + '/api/accion', {method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({accion: 'pos', plataforma: plat, espera_login: 5})})
+    body: JSON.stringify({accion: 'pos', plataforma: plat, espera_login: 5, desde: dIni, hasta: dFin})})
     .then(function(r){ return r.json(); })
     .then(function(j){ if (!j.id) throw new Error(j.error || 'no arrancó'); vigilar(j.id); })
     .catch(function(e){
