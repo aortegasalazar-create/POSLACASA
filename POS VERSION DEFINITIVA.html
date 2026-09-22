@@ -3318,7 +3318,7 @@ cargarDatos();
           <button class="orp-chip" onclick="document.getElementById('plat-actualizar').style.display='none'">Cerrar</button>
         </div>
       </div>
-      <div class="orp-box-n" style="margin:0 0 8px">Lo hace el robot del panel ORP de tu Mac: Uber y Rappi con sus ventanas, y DiDi en tu propio Chrome con tu sesión (se abre una pestaña de DiDi y se cierra sola). Trae el periodo que tengas elegido en el calendario de arriba; lo que ya estaba no se duplica.</div>
+      <div class="orp-box-n" style="margin:0 0 8px">Lo hace el robot de ORP en la nube: entra a Uber, Rappi y DiDi con sus propias sesiones, aunque tu Mac esté apagada. Trae el periodo que tengas elegido en el calendario de arriba; lo que ya estaba no se duplica.</div>
       <div id="plat-act-estado" style="font-size:13px;line-height:1.6;min-height:20px;white-space:pre-line"></div>
     </div>
     <div class="orp-cards" id="plat-kpis"></div>
@@ -4063,7 +4063,10 @@ function repGuardarCostos() {
 // ============ FIN REPORTES ORP ============
 
 // ============ ACTUALIZAR AHORA (panel ORP + marcador DiDi) ============
-var ORP_PANEL = 'http://localhost:5055';
+var ORP_PANEL = 'https://panel.104-236-17-246.sslip.io';   // panel ORP en la nube
+function orpLlave(){ var k=''; try{ k=localStorage.getItem('orpLlavePanel')||''; }catch(e){}
+  if(!k){ k=(prompt('Llave del panel ORP (solo la primera vez en este equipo):')||'').trim(); try{ if(k) localStorage.setItem('orpLlavePanel',k); }catch(e){} }
+  return k; }
 function platMostrarActualizar() { var b = document.getElementById('plat-actualizar'); b.style.display = b.style.display === 'none' ? '' : 'none'; }
 function platActualizarTodo() { platActualizarPanel('todas'); }
 function platActualizarPanel(plat) {
@@ -4079,17 +4082,17 @@ function platActualizarPanel(plat) {
   var fmtP = function(ymd){ return new Date(ymd + 'T12:00:00').toLocaleDateString('es-MX', {weekday: 'short', day: 'numeric', month: 'short'}); };
   var periodoTxt = dIni === dFin ? fmtP(dIni) : fmtP(dIni) + ' al ' + fmtP(dFin);
   nom += ' · ' + periodoTxt;
-  el.style.color = 'var(--gris)'; el.textContent = 'Conectando con el panel ORP de tu Mac… (' + periodoTxt + ')';
-  fetch(ORP_PANEL + '/api/accion', {method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({accion: 'pos', plataforma: plat, espera_login: 5, desde: dIni, hasta: dFin})})
-    .then(function(r){ return r.json(); })
+  el.style.color = 'var(--gris)'; el.textContent = 'Conectando con el panel ORP en la nube… (' + periodoTxt + ')';
+  fetch(ORP_PANEL + '/api/accion', {method: 'POST', headers: {'Content-Type': 'application/json', 'X-ORP-Llave': orpLlave()},
+    body: JSON.stringify({accion: 'pos', plataforma: plat, espera_login: 0, desde: dIni, hasta: dFin})})
+    .then(function(r){ if (r.status === 401) { try{ localStorage.removeItem('orpLlavePanel'); }catch(e){} } return r.json(); })
     .then(function(j){ if (!j.id) throw new Error(j.error || 'no arrancó'); vigilar(j.id); })
     .catch(function(e){
       el.style.color = '#f0a35c';
-      el.textContent = /fetch|network|load/i.test(e.message) ? 'No encuentro el panel ORP en esta computadora. En tu Mac abre «ORP - Abrir panel» y vuelve a darle Actualizar todo.' : e.message;
+      el.textContent = /fetch|network|load/i.test(e.message) ? 'No pude conectar con el panel ORP en la nube. Revisa el internet de este equipo y vuelve a darle Actualizar todo.' : e.message;
     });
   function vigilar(id) {
-    fetch(ORP_PANEL + '/api/tarea?id=' + encodeURIComponent(id)).then(function(r){ return r.json(); }).then(function(t){
+    fetch(ORP_PANEL + '/api/tarea?id=' + encodeURIComponent(id), {headers: {'X-ORP-Llave': orpLlave()}}).then(function(r){ return r.json(); }).then(function(t){
       var sal = (t.salida || []).map(String).filter(function(x){ return x.trim(); });
       var tit = sal.filter(function(x){ return /──|=====/.test(x); });
       var avisos = sal.filter(function(x){ return /no pude|no est|sin sesion|ENTRA A|Una sola vez|macOS|✗|error/i.test(x); });
