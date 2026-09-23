@@ -414,6 +414,7 @@ CÓMO ATIENDES
 - Si es un cliente que ya nos compró (abajo viene lo que sabemos de él), salúdalo por su nombre y ofrécele de entrada repetir lo de la última vez: «¿te pongo lo mismo del martes: 1 grande de pastor con lemon pepper, a Ingenio Ricardo Peart?». Si dice que sí, ya no le preguntes totopo, salsa, proteína, toppings, dirección ni pago: úsalos tal cual y pásale el resumen. Si quiere algo distinto, solo pregunta lo que cambia.
 - DIRECCIÓN DE UN CLIENTE CONOCIDO: si ya le hemos entregado antes, ofrécele esa dirección ("¿te lo mandamos a Mariano Matamoros 1039, como la otra vez?") en vez de pedírsela otra vez. Úsala tal cual quedó guardada; no la vuelvas a buscar en el mapa ni la cambies por una parecida.
 - Entiende lo que pide aunque lo escriba informal ("unas chilas verdes con pollo", "2 gorditas de chicharrón"). Tradúcelo a productos y opciones del MENÚ con sus ids.
+- PEDIDOS POR FOTO: mucha gente manda su pedido en una imagen (una lista en papel, una nota del celular, una captura de otro chat). Cuando el sistema te pase lo que dice esa foto, trátalo igual que si lo hubiera escrito: arma el pedido con eso y NUNCA le pidas que lo vuelva a escribir. Confírmale de una vez, en una sola lista, todo lo que entendiste.
 - Solo vende lo que está en el MENÚ, con esos nombres. Nunca inventes productos, precios, promociones ni tiempos. "Chilas" = chilaquiles. Hay TRES tamaños y son productos distintos: Mini Chilaquiles ($68), Chilaquiles Medianos ($85) y Chilaquiles Grandes ($118). Respeta SIEMPRE el tamaño que diga el cliente: «mediano/medianos» = Chilaquiles Medianos (NUNCA Mini), «chico/mini/pequeño» = Mini Chilaquiles, «grande» = Chilaquiles Grandes. «Chilaquiles» a secas, sin tamaño, = Chilaquiles Grandes. Si el cliente corrige el tamaño, corrígelo con revisar_pedido y vuelve a confirmar antes de registrar.
 - Para cada producto con grupos «ELIGE UNA», pregunta lo que falte (totopo, salsa, proteína, masa, guiso). Si no le importa, sugiere lo más pedido: totopo Natural, salsa Verde cremosa, proteína Pollo.
 - Los chilaquiles llevan toppings incluidos (queso, crema, frijoles, cebolla y cilantro). Pregunta por los toppings UNA SOLA VEZ en toda la conversación, para todo el pedido junto: «¿todos con todo (queso, crema, frijoles, cebolla y cilantro) o le quitamos algo?». Si ya te contestó eso —o si él mismo ya dijo qué toppings quiere—, NO lo vuelvas a preguntar ni plato por plato ni «nada más para confirmar»: aplícalo y sigue. Si solo lo dijo para uno de varios platos, aplica lo mismo a todos y anótalo en el resumen para que él corrija si quiere.
@@ -842,12 +843,15 @@ async function procesarWebhook(body: any) {
         if (await mensajeRepartidor(m.from, l.texto, payload, m.id ?? null).catch((e) => { console.error("reparto", e); return false; })) return;
         let extraTexto = "";
         if (m.type === "image") {
-          await marcarComprobante(m.from);
-          const rev = m.image?.id ? await revisarComprobante(m.from, m.image.id).catch((e) => { console.error("comprobante", e); return null; }) : null;
-          if (rev && !("error" in rev)) {
-            extraTexto = rev.ok
-              ? ` [El bot ya revisó el comprobante y CUADRA con el pedido #${rev.p?.id} (${(rev.oks ?? []).join(", ")}): el pedido quedó marcado como PAGADO. Dale las gracias y confírmale que ya quedó registrado su pago.]`
-              : ` [El bot revisó el comprobante y NO pudo darlo por bueno: ${(rev.fallas ?? []).join("; ")}. NO le digas que está mal ni lo acuses: dile con amabilidad que su comprobante ya lo está confirmando alguien del equipo en un momento. No marques nada como pagado.]`;
+          const rev: any = m.image?.id ? await revisarImagen(m.from, m.image.id).catch((e) => { console.error("imagen", e); return null; }) : null;
+          if (rev && !rev.error) {
+            if (rev.aviso) extraTexto = rev.aviso;                 // pedido en foto, menú u otra imagen
+            else if ("ok" in rev) {                                 // comprobante de transferencia
+              await marcarComprobante(m.from);
+              extraTexto = rev.ok
+                ? ` [El bot ya revisó el comprobante y CUADRA con el pedido #${rev.p?.id} (${(rev.oks ?? []).join(", ")}): el pedido quedó marcado como PAGADO. Dale las gracias y confírmale que ya quedó registrado su pago.]`
+                : ` [El bot revisó el comprobante y NO pudo darlo por bueno: ${(rev.fallas ?? []).join("; ")}. NO le digas que está mal ni lo acuses: dile con amabilidad que su comprobante ya lo está confirmando alguien del equipo en un momento. No marques nada como pagado.]`;
+            }
           }
         }
         await atender(m.from, nombres[m.from] ?? "", l.texto + extraTexto, { lat: l.lat, lng: l.lng, wa_id: m.id });
@@ -873,6 +877,7 @@ async function marcarComprobante(tel: string) {
 type Comprobante = {
   es_comprobante: boolean; banco: string | null; monto: number | null; fecha: string | null; hora: string | null;
   beneficiario: string | null; cuenta_final: string | null; referencia: string | null; estado: string | null; alteraciones: string | null;
+  tipo?: "comprobante" | "pedido" | "menu" | "otra"; transcripcion?: string | null; descripcion?: string | null;
 };
 const limpiaNom = (t: string) => sinAcentos(t).replace(/[^a-z ]/g, " ").split(/\s+/).filter((x) => x.length > 2 && !["sra", "sr", "lic", "mr"].includes(x));
 
@@ -898,14 +903,19 @@ async function leerComprobante(base64: string, mime: string, modelo: string): Pr
     method: "POST",
     headers: { "x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01", "content-type": "application/json" },
     body: JSON.stringify({
-      model: modelo, max_tokens: 700,
-      system: "Lees comprobantes de transferencia bancaria mexicanos (SPEI, transferencias entre cuentas). Contestas SOLO un JSON, sin explicaciones.",
+      model: modelo, max_tokens: 1200,
+      system: "Ves las imágenes que manda un cliente a un restaurante por WhatsApp: comprobantes de transferencia, pedidos escritos (listas, notas, capturas de pantalla, fotos del menú con lo que quiere) o fotos cualquiera. Contestas SOLO un JSON, sin explicaciones.",
       messages: [{
         role: "user", content: [
           { type: "image", source: { type: "base64", media_type: mime, data: base64 } },
           { type: "text", text: `Devuelve SOLO este JSON:
-{"es_comprobante":true|false,"banco":texto|null,"monto":número|null,"fecha":"AAAA-MM-DD"|null,"hora":"HH:MM"|null,"beneficiario":texto|null,"cuenta_final":"últimos 4 dígitos de la cuenta/CLABE/tarjeta destino"|null,"referencia":texto|null,"estado":"lo que diga el comprobante, ej. Completada/Exitosa/En proceso"|null,"alteraciones":"SOLO si la imagen se ve editada o montada (tipografías distintas, recortes, números encimados). Las leyendas normales de los bancos (por ejemplo «Dato no verificado por la institución») NO son alteraciones: en ese caso pon null"}
-Reglas: el monto en número sin símbolos. Si el año no aparece, usa el año en curso. Si solo ves parte de la cuenta, pon los últimos 4 dígitos que se vean. Si la imagen no es un comprobante de transferencia (es comida, una foto cualquiera, etc.) pon es_comprobante:false y lo demás null.` },
+{"tipo":"comprobante"|"pedido"|"menu"|"otra","transcripcion":"TODO el texto que se alcanza a leer en la imagen, tal cual, respetando renglones y cantidades. null si no hay texto","descripcion":"en una línea, qué se ve en la imagen","es_comprobante":true|false,"banco":texto|null,"monto":número|null,"fecha":"AAAA-MM-DD"|null,"hora":"HH:MM"|null,"beneficiario":texto|null,"cuenta_final":"últimos 4 dígitos de la cuenta/CLABE/tarjeta destino"|null,"referencia":texto|null,"estado":"lo que diga el comprobante, ej. Completada/Exitosa/En proceso"|null,"alteraciones":"SOLO si la imagen se ve editada o montada (tipografías distintas, recortes, números encimados). Las leyendas normales de los bancos (por ejemplo «Dato no verificado por la institución») NO son alteraciones: en ese caso pon null"}
+Cómo clasificas «tipo»:
+- "comprobante": recibo o captura de una transferencia/SPEI/depósito bancario.
+- "pedido": cualquier imagen donde el cliente escribió lo que quiere: una lista en papel o en libreta, una nota del celular, una captura de otro chat, un mensaje reenviado, una foto del menú con cosas marcadas o señaladas. Transcribe la lista COMPLETA, renglón por renglón, con las cantidades y los detalles (tamaños, guisos, salsas, «sin cebolla», nombres de personas).
+- "menu": foto del menú del restaurante sin nada marcado.
+- "otra": comida, personas, lugares, fachadas, capturas de mapas, cualquier otra cosa.
+Reglas del comprobante: el monto en número sin símbolos. Si el año no aparece, usa el año en curso. Si solo ves parte de la cuenta, pon los últimos 4 dígitos que se vean. Si la imagen no es un comprobante pon es_comprobante:false y los campos del comprobante en null (transcripcion y descripcion SÍ se llenan siempre que se pueda).` },
         ],
       }],
     }),
@@ -925,18 +935,41 @@ async function sha256(b64: string) {
 }
 
 // Revisa el comprobante contra el pedido. Regresa qué cuadró y qué no.
-async function revisarComprobante(tel: string, mediaId: string) {
+// Ve la imagen UNA sola vez y decide qué es: comprobante de pago, pedido escrito, menú o una foto cualquiera.
+async function revisarImagen(tel: string, mediaId: string) {
   const c = await config();
-  if (Number(c.bot_pago_auto?.valor ?? 1) === 0) return null; // validación automática apagada
-  const desde = new Date(Date.now() - 12 * 3600 * 1000).toISOString();
-  const { data: peds } = await sb.from("wa_pedidos").select("*").eq("telefono", tel).eq("pago", "transferencia")
-    .gte("creado", desde).is("pedido_padre", null).order("id", { ascending: false }).limit(1);
-  const p = peds?.[0];
   const media = await bajarMedia(mediaId);
   if (!media) return { error: "No pude abrir la imagen" };
   const modelo = (c.bot_modelo?.texto || "claude-sonnet-5").trim();
   const cmp = await leerComprobante(media.base64, media.mime, modelo);
   if (!cmp) return { error: "No pude leer la imagen" };
+  const tipo = cmp.tipo ?? (cmp.es_comprobante ? "comprobante" : "otra");
+  const texto = String(cmp.transcripcion ?? "").trim();
+
+  if (tipo === "pedido" && texto) {
+    await sb.from("wa_mensajes").insert({ telefono: tel, rol: "sistema", texto: "🖼️ Mandó su pedido en una imagen. El bot lo leyó:\n" + texto.slice(0, 900) });
+    return { tipo, texto, aviso: ` [El cliente mandó una FOTO con su pedido. Esto es lo que dice, tal cual:\n«${texto}»\n` +
+      `Tómalo como si te lo hubiera escrito él. Tradúcelo a productos del MENÚ y NO le pidas que te lo escriba otra vez. ` +
+      `Confírmale en una sola lista lo que entendiste, con las cantidades y los detalles, y pregunta SOLO lo que de plano no venga en la foto (máximo dos cosas). ` +
+      `Si algo de la foto no existe en el menú o no se entiende, dilo como parte de esa misma confirmación, sin frenar el resto del pedido.]` };
+  }
+  if (tipo === "menu") {
+    return { tipo, texto, aviso: " [El cliente mandó una foto del menú, sin nada marcado. Pregúntale qué de ahí se le antoja, breve.]" };
+  }
+  if (tipo !== "comprobante") {
+    const d = String(cmp.descripcion ?? "").trim();
+    return { tipo, texto, aviso: ` [El cliente mandó una imagen${d ? " (" + d + ")" : ""}. NO es un comprobante de pago ni un pedido: no lo trates como comprobante. Contéstale breve y natural, y si venías a medio pedido, sigue donde ibas.]` };
+  }
+  if (Number(c.bot_pago_auto?.valor ?? 1) === 0) return { tipo, texto }; // validación automática apagada
+  return await revisarComprobante(tel, media, cmp);
+}
+
+async function revisarComprobante(tel: string, media: { base64: string; mime: string }, cmp: Comprobante) {
+  const c = await config();
+  const desde = new Date(Date.now() - 12 * 3600 * 1000).toISOString();
+  const { data: peds } = await sb.from("wa_pedidos").select("*").eq("telefono", tel).eq("pago", "transferencia")
+    .gte("creado", desde).is("pedido_padre", null).order("id", { ascending: false }).limit(1);
+  const p = peds?.[0];
   const hash = await sha256(media.base64);
   if (!cmp.es_comprobante) return { p, cmp, ok: false, fallas: ["La imagen no parece un comprobante de transferencia"], hash };
 
