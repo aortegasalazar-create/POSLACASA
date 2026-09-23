@@ -409,9 +409,11 @@ CÓMO ATIENDES
 - Si el cliente ya te dijo su nombre (aunque sea de pasada, «a nombre de Sam»), NO se lo vuelvas a pedir: úsalo.
 - Pide solo lo que falta, en una sola pregunta cuando se pueda. No repitas lo que el cliente ya dijo ni le enlistes los toppings incluidos.
 - Entiende lo que pide aunque lo escriba informal ("unas chilas verdes con pollo", "2 gorditas de chicharrón"). Tradúcelo a productos y opciones del MENÚ con sus ids.
-- Solo vende lo que está en el MENÚ, con esos nombres. Nunca inventes productos, precios, promociones ni tiempos. "Chilas" = chilaquiles. "Chilaquiles" a secas = Chilaquiles Grandes ($118); los chicos son Mini Chilaquiles.
+- Solo vende lo que está en el MENÚ, con esos nombres. Nunca inventes productos, precios, promociones ni tiempos. "Chilas" = chilaquiles. Hay TRES tamaños y son productos distintos: Mini Chilaquiles ($68), Chilaquiles Medianos ($85) y Chilaquiles Grandes ($118). Respeta SIEMPRE el tamaño que diga el cliente: «mediano/medianos» = Chilaquiles Medianos (NUNCA Mini), «chico/mini/pequeño» = Mini Chilaquiles, «grande» = Chilaquiles Grandes. «Chilaquiles» a secas, sin tamaño, = Chilaquiles Grandes. Si el cliente corrige el tamaño, corrígelo con revisar_pedido y vuelve a confirmar antes de registrar.
 - Para cada producto con grupos «ELIGE UNA», pregunta lo que falte (totopo, salsa, proteína, masa, guiso). Si no le importa, sugiere lo más pedido: totopo Natural, salsa Verde cremosa, proteína Pollo.
 - Los chilaquiles llevan toppings incluidos (queso, crema, frijoles, cebolla y cilantro). SIEMPRE pregunta, por cada chilaquil, si lo quiere con todo o sin alguno (ej. "¿Con todo: queso, crema, frijoles, cebolla y cilantro?"). Si no lo preguntas, el sistema no te deja cerrar el pedido.
+- TODO lo que tenga costo extra (proteína, extras, toppings por aparte, cambios) díselo con su precio ANTES de agregarlo: «los toppings aparte son +$15 por plato, ¿así te los pongo?». Nunca le sumes un cargo que no haya oído.
+- Si el cliente cambia con cuánto paga (dijo $300 y luego $500), usa SIEMPRE el último. Nunca escribas cambios en negativo ni le des vueltas a un faltante de pesos: si no alcanza, dilo en una línea y pregunta con cuánto paga.
 - Cuando haga sentido, sugiere UNA cosa extra (un refresco, un extra de proteína) sin insistir.
 - Pregunta: ¿lo pasa a recoger a la tienda o se lo llevamos a domicilio? (NUNCA le digas «pickup» al cliente: mucha gente no conoce la palabra. Di «recoger en tienda». En el resumen escribe «🏪 Recoger en tienda» o «🛵 A domicilio».) Si es a domicilio pide la dirección, o el nombre del lugar si es un lugar conocido (oficina, hospital, plaza, escuela), o su ubicación 📍, y usa cotizar_envio. Si el cliente no sabe calle y número pero te dice el nombre del lugar, NO le insistas: busca con ese nombre, confírmale el lugar que encontraste y pídele referencias (edificio, puerta, a quién preguntar). Si queda fuera de zona, díselo con amabilidad y ofrece que lo pase a recoger a la tienda.
 - Nunca digas un total sin usar antes revisar_pedido.
@@ -573,6 +575,12 @@ async function pedidoReciente(tel: string) {
 }
 
 // Huella del pedido: si el cliente confirma un resumen, lo que se registra tiene que ser exactamente eso
+// Huella de los productos de un pedido (para no registrar dos veces lo mismo)
+function firmaItems(lineas: any[]) {
+  return JSON.stringify((lineas ?? []).map((l: any) =>
+    [l.producto_id, Number(l.cantidad), [...(l.opciones ?? [])].sort(), [...(l.sin ?? [])].sort()]).sort());
+}
+
 function firmaPedido(lineas: any[], input: any) {
   return JSON.stringify({
     l: lineas.map((l) => [l.producto_id, l.cantidad, [...l.opciones].sort(), [...l.sin].sort(), l.extras.map((e: any) => [e.opcion_id, e.cantidad]).sort()]).sort(),
@@ -700,6 +708,19 @@ async function herramienta(nombre: string, input: any, ctx: { tel: string; nombr
     if (input.pago === "efectivo" && input.paga_con && Number(input.paga_con) < total) {
       return { ok: false, errores: [`Paga con ${dinero(input.paga_con)} pero el total es ${dinero(total)}`] };
     }
+    // Si el cliente contesta «es correcto» y «es todo» en dos mensajes, cada uno abre una corrida del bot
+    // y las dos intentan registrar. Antes de guardar revisamos si ese mismo pedido ya quedó hace un momento.
+    const desdeDup = new Date(Date.now() - 20 * 60 * 1000).toISOString();
+    const { data: recientes } = await sb.from("wa_pedidos").select("id,total,items,creado")
+      .eq("telefono", ctx.tel).gte("creado", desdeDup).order("id", { ascending: false }).limit(5);
+    const huella = firmaItems(v.lineas);
+    const mismo = (recientes ?? []).find((p: any) => Number(p.total) === Number(total) && firmaItems(p.items) === huella);
+    if (mismo) {
+      ctx.contexto.revision = null; ctx.contexto.ultimo_pedido = mismo.id;
+      await sb.from("wa_chats").update({ contexto: ctx.contexto }).eq("telefono", ctx.tel);
+      return { ok: true, folio: mismo.id, total, envio, subtotal: v.subtotal, lineas: resumen, ya_estaba: true,
+        nota: `Este pedido YA quedó registrado con el folio #${mismo.id}. NO lo registres otra vez ni mandes otro resumen ni otro folio. Si ya le diste el número, contesta solo algo breve y amable.` };
+    }
     const fila = {
       telefono: ctx.tel, nombre: input.nombre || ctx.nombre, estado: "nuevo", entrega: input.entrega,
       direccion: input.entrega === "domicilio" ? (cot?.direccion || input.direccion || null) : null,
@@ -733,6 +754,13 @@ function leerMensaje(m: any): { texto: string; lat?: number; lng?: number } {
     case "audio": return { texto: "[Mandó un audio. Todavía no puedo escuchar audios: pídele con amabilidad que lo escriba]" };
     case "interactive": return { texto: m.interactive?.button_reply?.title ?? m.interactive?.list_reply?.title ?? "[respuesta]" };
     case "button": return { texto: m.button?.text ?? "[botón]" };
+    case "edit": case "message_edit": case "edited": {
+      const nuevo = m.edit?.text?.body ?? m.edited?.text?.body ?? m.text?.body ?? m.edit?.body ?? "";
+      return { texto: nuevo ? `[Corrigió su mensaje anterior, ahora dice:] ${nuevo}` : "[Editó su mensaje anterior y no me llegó el texto nuevo. Pregúntale qué cambió, sin dar por hecho nada.]" };
+    }
+    case "sticker": return { texto: "[Mandó un sticker 😄]" };
+    case "reaction": return { texto: `[Reaccionó ${m.reaction?.emoji ?? "👍"} a un mensaje]` };
+    case "contacts": return { texto: "[Compartió un contacto]" };
     default: return { texto: `[Mandó un mensaje tipo ${m.type}]` };
   }
 }
@@ -1068,9 +1096,21 @@ async function ofrecerSiguiente(pedidoId: number): Promise<void> {
   }
 }
 
+// Si el pedido trae «Ubicación compartida por WhatsApp» pero sí tiene coordenadas, lo volvemos calle y colonia.
+async function arreglarDireccion(p: any) {
+  if (!p || p.entrega !== "domicilio" || p.lat == null || p.lng == null) return p;
+  const d = String(p.direccion ?? "").trim();
+  if (d && !/ubicaci[oó]n/i.test(d)) return p;
+  const calle = await direccionDeCoords(Number(p.lat), Number(p.lng)).catch(() => "");
+  if (!calle) return p;
+  await sb.from("wa_pedidos").update({ direccion: calle }).eq("id", p.id);
+  return { ...p, direccion: calle };
+}
+
 async function iniciarReparto(pedidoId: number, reiniciar = false) {
-  const { data: p } = await sb.from("wa_pedidos").select("*").eq("id", pedidoId).maybeSingle();
+  let { data: p } = await sb.from("wa_pedidos").select("*").eq("id", pedidoId).maybeSingle();
   if (!p) return { ok: false, error: "No existe ese pedido" };
+  p = await arreglarDireccion(p);
   if (p.entrega !== "domicilio") return { ok: true, omitido: "no es a domicilio" };
   if (p.pedido_padre) { // lo agregado: si el pedido original ya tiene repartidor, se le avisa
     const { data: padre } = await sb.from("wa_pedidos").select("*").eq("id", p.pedido_padre).maybeSingle();
@@ -1217,8 +1257,12 @@ Deno.serve(async (req) => {
 
   // Avisos al cliente desde el POS (solo 3 textos fijos y una vez por pedido: no sirve para mandar otra cosa)
   if (body.accion === "aviso") {
-    const { data: p } = await sb.from("wa_pedidos").select("id,telefono,nombre,entrega,items,total,pedido_padre").eq("id", Number(body.pedido_id)).maybeSingle();
+    const { data: p } = await sb.from("wa_pedidos").select("id,telefono,nombre,entrega,items,total,pedido_padre,creado").eq("id", Number(body.pedido_id)).maybeSingle();
     if (!p) return json({ ok: false, error: "No existe ese pedido" }, 404);
+    // Si el pedido se acepta mucho después de hecho, el cliente ya comió: decirle «está en preparación» queda peor que callarse.
+    if (body.tipo === "aceptado" && p.creado && (Date.now() - new Date(p.creado).getTime()) / 60000 > 30) {
+      return json({ ok: true, omitido: "aceptado muy tarde: no se mandó el aviso al cliente" });
+    }
     const c = await config();
     const t = (k: string) => (c[k]?.texto ?? "").trim();
     const quien = String(p.nombre ?? "").trim().split(/\s+/)[0];
