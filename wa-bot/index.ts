@@ -387,7 +387,7 @@ function estadoHorario(c: Awaited<ReturnType<typeof config>>) {
   return { abierto, resumen: resumenHorario(dias), proxima, cierra: hoy?.cierra ?? null };
 }
 
-function reglas(c: Awaited<ReturnType<typeof config>>, reciente: string, promosTxt = "", equipoReciente = false) {
+function reglas(c: Awaited<ReturnType<typeof config>>, reciente: string, promosTxt = "", equipoReciente = false, ficha = "") {
   const t = (k: string) => (c[k]?.texto ?? "").trim();
   const hz = estadoHorario(c);
   return `Eres quien toma los pedidos por WhatsApp de una cocina en Saltillo que tiene dos marcas: LA CASA DEL CHILAQUIL (chilaquiles) y DELIGORDAS (gorditas). Es la misma cocina: en un solo pedido pueden venir productos de las dos.
@@ -407,11 +407,16 @@ ${t("bot_notas") ? "Indicaciones del dueño: " + t("bot_notas") : ""}
 CÓMO ATIENDES
 - Escribe como en WhatsApp: corto, cálido, natural, español de México. Nada de párrafos largos ni listas enormes. En WhatsApp las negritas llevan UN solo asterisco (*así*), nunca dos. Úsalas solo para el resumen y el total. Uno o dos emojis como mucho.
 - Si el cliente ya te dijo su nombre (aunque sea de pasada, «a nombre de Sam»), NO se lo vuelvas a pedir: úsalo.
-- Pide solo lo que falta, en una sola pregunta cuando se pueda. No repitas lo que el cliente ya dijo ni le enlistes los toppings incluidos.
+- Pide solo lo que falta, DE A UNA COSA POR MENSAJE (dos como máximo, y solo si son de la misma familia, como «¿totopo y salsa?»). PROHIBIDO mandar cuestionarios: nada de listas numeradas 1., 2., 3. con varias preguntas juntas. Si le mandas cuatro preguntas de golpe, el cliente se pierde y te contesta copiando y pegando.
+- NUNCA preguntes dos veces lo mismo. Antes de preguntar algo, revisa toda la conversación: si el cliente ya lo dijo —aunque haya sido de pasada, con otras palabras o en una lista que escribió él— ya lo sabes, úsalo. Si algo quedó a medias, dilo en el resumen final y deja que él corrija ahí, en vez de frenar el pedido con otra pregunta.
+- Si el cliente se muestra molesto o te repite lo mismo, no insistas con la pregunta: arma el resumen con lo que entendiste y pídele que te corrija ahí.
+- VARIAS PERSONAS EN UN MISMO CHAT: si pide para él y para alguien más ("el de Celeste", "uno para mí y otro para Fulano"), va todo en UN pedido; en el resumen agrupa por persona. No abras pedidos separados ni preguntes a quién pertenece cada cosa más de una vez.
+- Si es un cliente que ya nos compró (abajo viene lo que sabemos de él), salúdalo por su nombre y ofrécele de entrada repetir lo de la última vez: «¿te pongo lo mismo del martes: 1 grande de pastor con lemon pepper, a Ingenio Ricardo Peart?». Si dice que sí, ya no le preguntes totopo, salsa, proteína, toppings, dirección ni pago: úsalos tal cual y pásale el resumen. Si quiere algo distinto, solo pregunta lo que cambia.
+- DIRECCIÓN DE UN CLIENTE CONOCIDO: si ya le hemos entregado antes, ofrécele esa dirección ("¿te lo mandamos a Mariano Matamoros 1039, como la otra vez?") en vez de pedírsela otra vez. Úsala tal cual quedó guardada; no la vuelvas a buscar en el mapa ni la cambies por una parecida.
 - Entiende lo que pide aunque lo escriba informal ("unas chilas verdes con pollo", "2 gorditas de chicharrón"). Tradúcelo a productos y opciones del MENÚ con sus ids.
 - Solo vende lo que está en el MENÚ, con esos nombres. Nunca inventes productos, precios, promociones ni tiempos. "Chilas" = chilaquiles. Hay TRES tamaños y son productos distintos: Mini Chilaquiles ($68), Chilaquiles Medianos ($85) y Chilaquiles Grandes ($118). Respeta SIEMPRE el tamaño que diga el cliente: «mediano/medianos» = Chilaquiles Medianos (NUNCA Mini), «chico/mini/pequeño» = Mini Chilaquiles, «grande» = Chilaquiles Grandes. «Chilaquiles» a secas, sin tamaño, = Chilaquiles Grandes. Si el cliente corrige el tamaño, corrígelo con revisar_pedido y vuelve a confirmar antes de registrar.
 - Para cada producto con grupos «ELIGE UNA», pregunta lo que falte (totopo, salsa, proteína, masa, guiso). Si no le importa, sugiere lo más pedido: totopo Natural, salsa Verde cremosa, proteína Pollo.
-- Los chilaquiles llevan toppings incluidos (queso, crema, frijoles, cebolla y cilantro). SIEMPRE pregunta, por cada chilaquil, si lo quiere con todo o sin alguno (ej. "¿Con todo: queso, crema, frijoles, cebolla y cilantro?"). Si no lo preguntas, el sistema no te deja cerrar el pedido.
+- Los chilaquiles llevan toppings incluidos (queso, crema, frijoles, cebolla y cilantro). Pregunta por los toppings UNA SOLA VEZ en toda la conversación, para todo el pedido junto: «¿todos con todo (queso, crema, frijoles, cebolla y cilantro) o le quitamos algo?». Si ya te contestó eso —o si él mismo ya dijo qué toppings quiere—, NO lo vuelvas a preguntar ni plato por plato ni «nada más para confirmar»: aplícalo y sigue. Si solo lo dijo para uno de varios platos, aplica lo mismo a todos y anótalo en el resumen para que él corrija si quiere.
 - TODO lo que tenga costo extra (proteína, extras, toppings por aparte, cambios) díselo con su precio ANTES de agregarlo: «los toppings aparte son +$15 por plato, ¿así te los pongo?». Nunca le sumes un cargo que no haya oído.
 - Si el cliente cambia con cuánto paga (dijo $300 y luego $500), usa SIEMPRE el último. Nunca escribas cambios en negativo ni le des vueltas a un faltante de pesos: si no alcanza, dilo en una línea y pregunta con cuánto paga.
 - Cuando haga sentido, sugiere UNA cosa extra (un refresco, un extra de proteína) sin insistir.
@@ -430,7 +435,7 @@ ${promosTxt ? "PROMOCIONES VIGENTES (se aplican solas en revisar_pedido; no inve
 - Si el cliente solo está contestando algo que el equipo le preguntó, o el tema lo está resolviendo el equipo (una queja, un problema con un pedido, un cobro, un reclamo, algo que ya quedó cerrado), NO escribas nada: contesta EXACTAMENTE «[CALLAR]» y nada más.
 - Si dudas entre hablar o callarte cuando el tema es delicado, cállate: contesta «[CALLAR]».
 - Si ya le dijiste que alguien del equipo lo atiende, no se lo repitas: mejor «[CALLAR]».
-` : ""}${reciente ? "PEDIDO RECIENTE DE ESTE CLIENTE:\n" + reciente + "\n" : ""}
+` : ""}${ficha ? "LO QUE YA SABEMOS DE ESTE CLIENTE (úsalo, no se lo vuelvas a preguntar):\n" + ficha + "\n" : ""}${reciente ? "PEDIDO RECIENTE DE ESTE CLIENTE:\n" + reciente + "\n" : ""}
 MENÚ (ids entre corchetes; los precios son exactos):`;
 }
 
@@ -515,12 +520,13 @@ async function atender(tel: string, nombre: string, texto: string, extra: { lat?
   const excluir = (c.bot_excluir?.texto ?? "").split(",").map((x) => Number(x.trim())).filter(Boolean);
   const menu = await cargarMenu(excluir);
   const reciente = await pedidoReciente(tel);
+  const ficha = await fichaCliente(tel).catch(() => "");
   const promos = await cargarPromos();
   const desde2h = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
   const { data: delEquipo } = await sb.from("wa_mensajes").select("id").eq("telefono", tel).eq("rol", "equipo").gte("creado", desde2h).limit(1);
   const equipoReciente = !!delEquipo?.length || chat?.modo === "equipo";
   const system = [
-    { type: "text", text: reglas(c, reciente, promosTexto(promos, menu), equipoReciente) },
+    { type: "text", text: reglas(c, reciente, promosTexto(promos, menu), equipoReciente, ficha) },
     { type: "text", text: menuTexto(menu), cache_control: { type: "ephemeral" } },
   ];
   const modelo = (c.bot_modelo?.texto || "claude-haiku-4-5-20251001").trim();
@@ -565,6 +571,36 @@ async function datosReciente(tel: string) {
   const total = Number(p.total) + (hijos ?? []).reduce((s: number, h: any) => s + Number(h.total), 0);
   return { p, hijos: hijos ?? [], total };
 }
+// Lo que ya sabemos de este cliente: cómo se llama, qué suele pedir y a dónde se lo hemos llevado.
+async function fichaCliente(tel: string) {
+  const { data } = await sb.from("wa_pedidos").select("id,nombre,estado,simulado,entrega,direccion,referencias,pago,paga_con,items,total,creado")
+    .eq("telefono", tel).order("id", { ascending: false }).limit(15);
+  const ps = (data ?? []).filter((p: any) => !p.simulado && !["cancelado", "rechazado"].includes(String(p.estado)));
+  if (!ps.length) return "";
+  const linea = (p: any) => (p.items ?? []).map((l: any) => `${l.cantidad}x ${l.nombre}${l.detalle ? " (" + l.detalle + ")" : ""}`).join(" + ");
+  const fecha = (x: string) => new Date(x).toLocaleDateString("es-MX", { timeZone: TZ, day: "numeric", month: "long" });
+  const nombre = ps.map((p: any) => String(p.nombre ?? "").trim()).find(Boolean) ?? "";
+  // direcciones usadas, de la más reciente a la más vieja, sin repetir
+  const dirs: string[] = [];
+  for (const p of ps) {
+    const d = String(p.direccion ?? "").trim();
+    if (!d || /ubicaci[oó]n/i.test(d)) continue;
+    const ref = String(p.referencias ?? "").trim();
+    const t = d + (ref ? ` (${ref})` : "");
+    if (!dirs.some((x) => x.slice(0, 18) === t.slice(0, 18))) dirs.push(t);
+    if (dirs.length >= 3) break;
+  }
+  const pagos = ps.map((p: any) => p.pago).filter(Boolean);
+  const habitual = pagos.length ? pagos.sort((a: string, b: string) =>
+    pagos.filter((x: string) => x === b).length - pagos.filter((x: string) => x === a).length)[0] : "";
+  const ult = ps.slice(0, 2).map((p: any) => `· ${fecha(p.creado)}: ${linea(p)} — ${p.entrega === "domicilio" ? "a domicilio" + (p.direccion ? " (" + p.direccion + ")" : "") : "recogió en tienda"}, pagó con ${p.pago}`);
+  return [
+    `Ya nos ha comprado ${ps.length} ${ps.length === 1 ? "vez" : "veces"}.${nombre ? " Se llama " + nombre + "." : ""}${habitual ? " Casi siempre paga con " + habitual + "." : ""}`,
+    "Sus últimos pedidos:", ...ult,
+    dirs.length ? "Direcciones a las que le hemos entregado:\n" + dirs.map((d) => "· " + d).join("\n") : "",
+  ].filter(Boolean).join("\n");
+}
+
 async function pedidoReciente(tel: string) {
   const r = await datosReciente(tel);
   if (!r) return "";
@@ -750,7 +786,7 @@ function leerMensaje(m: any): { texto: string; lat?: number; lng?: number } {
   switch (m.type) {
     case "text": return { texto: m.text?.body ?? "" };
     case "location": return { texto: `[Mandó su ubicación 📍${m.location?.name ? " " + m.location.name : ""}${m.location?.address ? ", " + m.location.address : ""}]`, lat: m.location?.latitude, lng: m.location?.longitude };
-    case "image": return { texto: `[Mandó una imagen${m.image?.caption ? ": " + m.image.caption : ""} — si pagó con transferencia, es su comprobante]` };
+    case "image": return { texto: `[Mandó una imagen${m.image?.caption ? ": " + m.image.caption : ""}. Si va a pagar con transferencia, seguramente es su comprobante; si no, NO lo trates como comprobante: pregúntale qué es o qué necesita]` };
     case "audio": return { texto: "[Mandó un audio. Todavía no puedo escuchar audios: pídele con amabilidad que lo escriba]" };
     case "interactive": return { texto: m.interactive?.button_reply?.title ?? m.interactive?.list_reply?.title ?? "[respuesta]" };
     case "button": return { texto: m.button?.text ?? "[botón]" };
