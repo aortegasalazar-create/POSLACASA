@@ -3195,6 +3195,10 @@ cargarDatos();
             </select>
           </label>
           <label>Números de prueba<input id="wa-cfg-probadores" class="orp-inp" placeholder="Ej. 844 123 4567, 844 765 4321"></label>
+          <label style="display:block">Productos que el bot NO vende por WhatsApp
+            <div style="font-size:12px;opacity:.7;margin:2px 0 6px">Palomea lo que quieras esconderle al bot. Siguen activos en el POS y en mostrador; solo no aparecen en el menú de WhatsApp.</div>
+            <div id="wa-cfg-excluir" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:4px 14px;max-height:190px;overflow:auto;padding:8px 10px;border:1px solid rgba(255,255,255,.14);border-radius:8px"></div>
+          </label>
           <label>Tiempo para recoger<input id="wa-cfg-pickup" class="orp-inp" placeholder="Ej. 20 minutos"></label>
           <label>Tiempo a domicilio<input id="wa-cfg-domicilio" class="orp-inp" placeholder="Ej. 40 a 60 minutos"></label>
           <label>Datos para transferencia<textarea id="wa-cfg-transf" class="orp-inp" rows="3" placeholder="Banco, titular y cuenta o CLABE. El bot se los manda al cliente que paga con transferencia."></textarea></label>
@@ -4659,6 +4663,7 @@ function waCargarCfg(llenar){
       var t = function(k){ return (waCfg[k] || {}).texto || ''; };
       document.getElementById('wa-cfg-activo').value = String(modo);
       document.getElementById('wa-cfg-probadores').value = t('bot_probadores');
+      waExcluirPintar(t('bot_excluir'));
       waHorarioPintar(t('bot_horario_dias'));
       document.getElementById('wa-cfg-pickup').value = t('bot_tiempo_pickup');
       document.getElementById('wa-cfg-domicilio').value = t('bot_tiempo_domicilio');
@@ -4674,6 +4679,25 @@ function waCargarCfg(llenar){
       waConsumo();
     }
   }).catch(function(e){ toast('No pude leer los ajustes del bot: ' + e.message, true); });
+}
+
+// Productos que el bot no vende: se guardan como ids, pero aquí se ven y se palomean por nombre.
+function waExcluirPintar(txt){
+  var caja = document.getElementById('wa-cfg-excluir');
+  if (!caja) return;
+  var fuera = String(txt || '').split(',').map(function(x){ return parseInt(x.trim(), 10); }).filter(function(x){ return !isNaN(x); });
+  sbFetch('productos?select=id,nombre,precio,activo&activo=eq.true&order=nombre').then(function(ps){
+    caja.innerHTML = (ps || []).map(function(p){
+      var m = fuera.indexOf(p.id) >= 0 ? ' checked' : '';
+      return '<label style="display:flex;align-items:center;gap:7px;font-size:13px;font-weight:400;margin:0;cursor:pointer">' +
+             '<input type="checkbox" class="wa-exc" value="' + p.id + '"' + m + ' style="width:15px;height:15px;flex:none;margin:0">' +
+             '<span>' + p.nombre + ' <span style="opacity:.55">$' + Number(p.precio) + '</span></span></label>';
+    }).join('') || '<div style="opacity:.6;font-size:13px">No hay productos activos.</div>';
+  }).catch(function(e){ caja.innerHTML = '<div style="opacity:.6;font-size:13px">No pude leer los productos: ' + e.message + '</div>'; });
+}
+function waExcluirLeer(){
+  var m = document.querySelectorAll('#wa-cfg-excluir .wa-exc:checked');
+  return Array.prototype.map.call(m, function(x){ return x.value; }).join(',');
 }
 
 // ---------- pedidos ----------
@@ -5014,7 +5038,7 @@ function waGuardarAjustes(){
     ['bot_tiempo_pickup', v('wa-cfg-pickup')], ['bot_tiempo_domicilio', v('wa-cfg-domicilio')],
     ['bot_transferencia', v('wa-cfg-transf')], ['bot_notas', v('wa-cfg-notas')], ['bot_modelo', v('wa-cfg-modelo')],
     ['bot_auto_textos', v('wa-cfg-auto')], ['bot_pago_titular', v('wa-cfg-titular')], ['bot_pago_cuenta4', v('wa-cfg-cuenta4')],
-    ['bot_probadores', v('wa-cfg-probadores')]
+    ['bot_probadores', v('wa-cfg-probadores')], ['bot_excluir', waExcluirLeer()]
   ];
   var activo = Number(document.getElementById('wa-cfg-activo').value) || 0;
   var pausa = Math.min(60, Math.max(0, parseInt(document.getElementById('wa-cfg-pausa').value) || 0));
