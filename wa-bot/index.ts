@@ -406,7 +406,9 @@ ${t("bot_notas") ? "Indicaciones del dueño: " + t("bot_notas") : ""}
 
 CÓMO ATIENDES
 - Escribe como en WhatsApp: corto, cálido, natural, español de México. Nada de párrafos largos ni listas enormes. En WhatsApp las negritas llevan UN solo asterisco (*así*), nunca dos. Úsalas solo para el resumen y el total. Uno o dos emojis como mucho.
-- Si el cliente ya te dijo su nombre (aunque sea de pasada, «a nombre de Sam»), NO se lo vuelvas a pedir: úsalo.
+- Si el cliente ya te dijo su nombre (aunque sea de pasada, «a nombre de Sam», o escrito en una foto), NO se lo vuelvas a pedir: úsalo.
+- EL NOMBRE DE HOY MANDA. El nombre que te dé en esta conversación va por encima de cualquier nombre guardado de pedidos anteriores. De un mismo número piden distintas personas (una oficina, una familia, un celular prestado): NUNCA saludes ni registres el pedido con un nombre viejo si hoy te dieron otro, y si no te han dado ninguno, pregúntalo en vez de suponerlo.
+- Cuando el pedido es para varias personas y cada plato trae su nombre, esos nombres son para identificar los platos en cocina, NO son el nombre de quien está pidiendo.
 - Pide solo lo que falta, DE A UNA COSA POR MENSAJE (dos como máximo, y solo si son de la misma familia, como «¿totopo y salsa?»). PROHIBIDO mandar cuestionarios: nada de listas numeradas 1., 2., 3. con varias preguntas juntas. Si le mandas cuatro preguntas de golpe, el cliente se pierde y te contesta copiando y pegando.
 - NUNCA preguntes dos veces lo mismo. Antes de preguntar algo, revisa toda la conversación: si el cliente ya lo dijo —aunque haya sido de pasada, con otras palabras o en una lista que escribió él— ya lo sabes, úsalo. Si algo quedó a medias, dilo en el resumen final y deja que él corrija ahí, en vez de frenar el pedido con otra pregunta.
 - Si el cliente se muestra molesto o te repite lo mismo, no insistas con la pregunta: arma el resumen con lo que entendiste y pídele que te corrija ahí.
@@ -580,7 +582,11 @@ async function fichaCliente(tel: string) {
   if (!ps.length) return "";
   const linea = (p: any) => (p.items ?? []).map((l: any) => `${l.cantidad}x ${l.nombre}${l.detalle ? " (" + l.detalle + ")" : ""}`).join(" + ");
   const fecha = (x: string) => new Date(x).toLocaleDateString("es-MX", { timeZone: TZ, day: "numeric", month: "long" });
-  const nombre = ps.map((p: any) => String(p.nombre ?? "").trim()).find(Boolean) ?? "";
+  const nombres = [...new Set(ps.map((p: any) => String(p.nombre ?? "").trim()).filter(Boolean))];
+  const otros = nombres.slice(1, 3);
+  const nombre = !nombres.length ? ""
+    : ` Su último pedido fue a nombre de ${nombres[0]}: úsalo mientras él no te dé otro.` +
+      (otros.length ? ` (Desde este número también han pedido ${otros.join(" y ")}, así que si te da otro nombre, ese manda.)` : "");
   // direcciones usadas, de la más reciente a la más vieja, sin repetir
   const dirs: string[] = [];
   for (const p of ps) {
@@ -596,7 +602,7 @@ async function fichaCliente(tel: string) {
     pagos.filter((x: string) => x === b).length - pagos.filter((x: string) => x === a).length)[0] : "";
   const ult = ps.slice(0, 2).map((p: any) => `· ${fecha(p.creado)}: ${linea(p)} — ${p.entrega === "domicilio" ? "a domicilio" + (p.direccion ? " (" + p.direccion + ")" : "") : "recogió en tienda"}, pagó con ${p.pago}`);
   return [
-    `Ya nos ha comprado ${ps.length} ${ps.length === 1 ? "vez" : "veces"}.${nombre ? " Se llama " + nombre + "." : ""}${habitual ? " Casi siempre paga con " + habitual + "." : ""}`,
+    `Ya nos ha comprado ${ps.length} ${ps.length === 1 ? "vez" : "veces"}.${nombre}${habitual ? " Casi siempre paga con " + habitual + "." : ""}`,
     "Sus últimos pedidos:", ...ult,
     dirs.length ? "Direcciones a las que le hemos entregado:\n" + dirs.map((d) => "· " + d).join("\n") : "",
   ].filter(Boolean).join("\n");
