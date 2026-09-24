@@ -3573,12 +3573,25 @@ function platEstimado(v) {
   if (f.base === 'neto') ingreso = parseFloat(v.neto || 0);
   else ingreso = (f.base === 'antes' ? bruta : bruta + desc) * (1 - f.comision - f.prestamo);
   var efectivo = parseFloat(v.efectivo_cobrado || 0);
+  // DiDi descuenta del deposito, fuera de la «Ganancia por pedido» (comprobado al peso contra su
+  // estado de cuenta, Chila Que Rico 14-20 sep 2026):
+  //  - IVA de la app: 16% de la comision, en TODOS los pedidos
+  //  - Retencion de IVA 8% e ISR 2.5% sobre la venta sin IVA (base de la tarifa / 1.16),
+  //    SOLO en pedidos pagados con tarjeta (los de efectivo no llevan retencion)
+  // Los anuncios no se pueden saber por pedido: llegan en el estado de cuenta del martes.
+  if (v.plataforma === 'didi_food' && f.base === 'neto') {
+    var com = Math.abs(parseFloat(v.comision || 0));
+    var imp = com * 0.16;
+    // base = venta - promo de la tienda + lo que DiDi pone de promo (en el POS viene en «otros»)
+    if (!(efectivo > 0)) imp += Math.max(bruta + desc + Math.max(parseFloat(v.otros || 0), 0), 0) / 1.16 * (0.08 + 0.025);
+    ingreso -= imp;
+  }
   return {ingreso: ingreso, total: ingreso, efectivo: efectivo, banco: ingreso - efectivo, deposito: ingreso - efectivo};
 }
 function platCargarFactores() {
   return sbFetch('factores_plataforma?select=*&order=plataforma,marca').then(function(r){ platFactores = r || []; return platFactores; });
 }
-var PLAT_SELECT = 'id,fecha,plataforma,marca,folio_plataforma,notas,venta_bruta,desc_tienda,neto,neto_estimado,metodo_pago,efectivo_cobrado';
+var PLAT_SELECT = 'id,fecha,plataforma,marca,folio_plataforma,notas,venta_bruta,desc_tienda,comision,otros,neto,neto_estimado,metodo_pago,efectivo_cobrado';
 
 function platUltimaEntrada() {
   return sbFetch('ventas?plataforma=not.is.null&importado_at=not.is.null&select=importado_at&order=importado_at.desc&limit=1')
