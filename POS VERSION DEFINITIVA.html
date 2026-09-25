@@ -1273,9 +1273,10 @@ var deliveryService = null;
 var deliverySessionToken = null;
 
 function obtenerCostoEnvio(distKm) {
+  // Tarifa de Alfredo (sep 2026): km de la RUTA en coche (Google Maps, la mas corta), redondeados hacia arriba.
+  // Hasta 3 km $40; cada km adicional +$10  (4 km $50, 5 $60, 7 $80 ... 15 km $160).
   var d = Math.ceil(distKm);
-  var tarifas = {1:25,2:25,3:37,4:47,5:56,6:65,7:74,8:84,9:93,10:102,11:112,12:121,13:130,14:140,15:149,16:158,17:167,18:177,19:186,20:195,21:205,22:214,23:223,24:233,25:242,26:251,27:260,28:269,29:278,30:288};
-  return tarifas[d] || (288 + (d - 30) * 10);
+  return d <= 3 ? 40 : 40 + (d - 3) * 10;
 }
 
 function initDeliverySearch() {
@@ -1401,25 +1402,6 @@ function aplicarResultado(leg, addr) {
   recalc();
 }
 
-function calcularDistanciaEntrega(destLat, destLng, descripcion) {
-  var R = 6371;
-  var dLat = (destLat - DELIVERY_ORIGEN_LAT) * Math.PI / 180;
-  var dLon = (destLng - DELIVERY_ORIGEN_LNG) * Math.PI / 180;
-  var a = Math.sin(dLat/2)*Math.sin(dLat/2) + Math.cos(DELIVERY_ORIGEN_LAT*Math.PI/180)*Math.cos(destLat*Math.PI/180)*Math.sin(dLon/2)*Math.sin(dLon/2);
-  var lineaRecta = R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-  var factor = lineaRecta < 2 ? 2.0 : lineaRecta < 4 ? 1.6 : lineaRecta < 7 ? 1.35 : 1.2;
-  var distKm = lineaRecta * factor;
-  var costo = obtenerCostoEnvio(distKm);
-  document.getElementById('delivery-addr-txt').textContent = '📍 ' + descripcion;
-  document.getElementById('delivery-dist-txt').textContent = '🛣️ ' + distKm.toFixed(1) + ' km aprox';
-  document.getElementById('delivery-costo-txt').textContent = '$' + costo + ' de envío';
-  document.getElementById('envio-inp').value = costo;
-  window._deliveryAddr = descripcion;
-  window._deliveryLat = destLat;
-  window._deliveryLng = destLng;
-  recalc();
-  if(deliveryService) deliverySessionToken = new google.maps.places.AutocompleteSessionToken();
-}
 // ---- FIN DELIVERY ----
 
 function ajustarAlturaTicket() {
