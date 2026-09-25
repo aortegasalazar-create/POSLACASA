@@ -381,6 +381,16 @@ header{background:linear-gradient(90deg,#192d5b 0%,#1e3a78 100%);border-bottom:1
 .nav-tab{display:inline-flex;align-items:center;gap:7px;color:#b9c8e8;font-weight:600;border-radius:9px;padding:8px 12px;}
 .nav-tab:hover{background:rgba(255,255,255,.07);color:#fff;}
 .nav-tab.active{background:rgba(255,255,255,.14);color:#fff;box-shadow:inset 0 -2px 0 #7fb0ff;}
+.pico-wrap{position:relative;flex-shrink:0;margin-left:auto;}
+.pico-btn{background:rgba(255,255,255,.07);color:#b9c8e8;border:1px solid rgba(255,255,255,.14);border-radius:10px;padding:7px 12px;font-family:Inter,sans-serif;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;}
+.pico-btn.on{background:#b45309;color:#fff;border-color:#f59e0b;animation:waLatido 1.6s ease-in-out infinite;}
+.pico-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:99999;background:#13203d;border:1px solid rgba(255,255,255,.18);border-radius:12px;padding:10px;box-shadow:0 12px 36px rgba(0,0,0,.5);width:250px;}
+.pico-menu[hidden]{display:none!important;}
+.pico-menu p{margin:0 0 8px;color:#b9c8e8;font-size:12px;line-height:1.35;}
+.pico-menu .pico-ops{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;}
+.pico-menu button{background:rgba(255,255,255,.08);color:#fff;border:1px solid rgba(255,255,255,.16);border-radius:9px;padding:9px 4px;font-weight:700;font-size:14px;cursor:pointer;font-family:Inter,sans-serif;}
+.pico-menu button.sel{background:#b45309;border-color:#f59e0b;}
+.pico-menu button.pico-normal{grid-column:1/-1;font-weight:600;font-size:13px;}
 .hora{color:#b9c8e8;font-variant-numeric:tabular-nums;}
 .ic{width:16px;height:16px;flex-shrink:0;vertical-align:-3px;}
 .orp-box-t .ic,details.orp-box>summary .ic{width:18px;height:18px;margin-right:8px;color:var(--dorado);vertical-align:-4px;}
@@ -426,7 +436,17 @@ header{background:linear-gradient(90deg,#192d5b 0%,#1e3a78 100%);border-bottom:1
       <div style="display:none;" id="delivery-addr-txt"></div>
     </div>
   </div>
-  <div class="hora" id="reloj" style="flex-shrink:0;white-space:nowrap;margin-left:auto;">--:--</div>
+  <div class="pico-wrap">
+    <button id="pico-btn" class="pico-btn" onclick="picoMenu(event)" title="Hora pico: sube el tiempo que el bot le promete al cliente">⏱ Tiempo normal</button>
+    <div id="pico-menu" class="pico-menu" hidden onclick="event.stopPropagation()">
+      <p><b>¿Mucho trabajo?</b> Suma minutos a lo que el bot le promete al cliente (recoger y domicilio). Se regresa solo a lo normal en 45 min.</p>
+      <div class="pico-ops">
+        <button data-pico="5" onclick="picoPoner(5)">+5</button><button data-pico="10" onclick="picoPoner(10)">+10</button><button data-pico="20" onclick="picoPoner(20)">+20</button>
+        <button data-pico="30" onclick="picoPoner(30)">+30</button><button data-pico="40" onclick="picoPoner(40)">+40</button><button data-pico="0" onclick="picoPoner(0)">Normal</button>
+      </div>
+    </div>
+  </div>
+  <div class="hora" id="reloj" style="flex-shrink:0;white-space:nowrap;margin-left:10px;">--:--</div>
 </header>
 
 
@@ -4584,7 +4604,11 @@ function waSonar(){
 var waUltimoSonido = 0;
 function waRevisar(){
   // Pedidos cerrados por el bot que nadie ha aceptado (los del simulador del POS no cuentan)
-  sbFetch('wa_pedidos?estado=eq.nuevo&telefono=neq.SIMULADOR&select=id,nombre,total&order=id.desc&limit=50').then(function(r){
+  sbFetch('wa_pedidos?estado=eq.nuevo&telefono=neq.SIMULADOR&select=id,nombre,total,programado_para&order=id.desc&limit=50').catch(function(){
+    return sbFetch('wa_pedidos?estado=eq.nuevo&telefono=neq.SIMULADOR&select=id,nombre,total&order=id.desc&limit=50');
+  }).then(function(r){
+    // los programados para más tarde se ven en la lista, pero no suenan hasta 10 min antes de su hora
+    r = r.filter(function(p){ return !p.programado_para || new Date(p.programado_para).getTime() - Date.now() < 600000; });
     var b = document.getElementById('wa-badge');
     b.textContent = r.length; b.hidden = !r.length;
     var max = r.length ? r[0].id : 0, ahora = Date.now();
@@ -4606,17 +4630,19 @@ function waRevisar(){
 // ---------- aviso cuando el bot pide apoyo y pasa un chat al equipo ----------
 var waUltimoSis = null;
 function waRevisarEquipo(){
-  sbFetch('wa_mensajes?rol=eq.sistema&telefono=neq.SIMULADOR&texto=ilike.Pasado%20al%20equipo*&select=id,telefono,creado&order=id.desc&limit=5').then(function(r){
+  sbFetch('wa_mensajes?rol=eq.sistema&telefono=neq.SIMULADOR&or=(texto.ilike.Pasado%20al%20equipo*,texto.ilike.Aviso%20al%20equipo*)&select=id,telefono,texto,creado&order=id.desc&limit=5').then(function(r){
     if (!r || !r.length) return;
     var top = r[0];
     if (waUltimoSis === null) { waUltimoSis = top.id; return; }
     if (top.id <= waUltimoSis) return;
     waUltimoSis = top.id;
     if (Date.now() - new Date(top.creado).getTime() > 300000) return;
-    waSonar();
-    toast('\u{1F64B} El bot pidi\u00f3 apoyo en un chat');
+    waSonar(); setTimeout(waSonar, 2200);
+    var aviso = /^Aviso al equipo:/i.test(top.texto || '');
+    var txt = aviso ? String(top.texto).replace(/^Aviso al equipo:\s*/i, '') : 'El bot pidi\u00f3 apoyo en un chat';
+    toast((aviso ? '\u{1F4E3} ' : '\u{1F64B} ') + txt);
     var el = document.getElementById('wa-alerta-equipo');
-    if (el) { el.innerHTML = '\u{1F64B} <b>El bot pidi\u00f3 apoyo en un chat</b><span>Ver chat</span>'; el.hidden = false; }
+    if (el) { el.innerHTML = (aviso ? '\u{1F4E3} <b>' + waEsc(txt) + '</b> \u00b7 ' + waTel(top.telefono) : '\u{1F64B} <b>El bot pidi\u00f3 apoyo en un chat</b>') + '<span>Ver chat</span>'; el.hidden = false; }
   }).catch(function(){});
 }
 function waIrAlertaEquipo(){
@@ -4629,8 +4655,46 @@ function waIrAlerta(){
   irVista('whatsapp', document.querySelector('.nav-tab[data-vista=whatsapp]'));
   waSeccion('pedidos'); waFiltro('nuevo');
 }
+// ---------- hora pico: minutos extra que el bot le promete al cliente ----------
+var picoCfg = {min: 0, hasta: null};
+function picoCargar(){
+  return sbFetch('config_orp?clave=in.(bot_extra_min,bot_extra_hasta)&select=clave,valor,texto').then(function(r){
+    var m = 0, h = null;
+    (r || []).forEach(function(x){ if (x.clave === 'bot_extra_min') m = Number(x.valor) || 0; if (x.clave === 'bot_extra_hasta') h = x.texto || null; });
+    if (h && new Date(h).getTime() < Date.now()) m = 0;
+    picoCfg = {min: m, hasta: h}; picoPintar();
+  }).catch(function(){});
+}
+function picoPintar(){
+  var b = document.getElementById('pico-btn'); if (!b) return;
+  if (picoCfg.min && picoCfg.hasta && new Date(picoCfg.hasta).getTime() < Date.now()) picoCfg.min = 0;
+  if (picoCfg.min) {
+    b.classList.add('on');
+    b.textContent = '⏱ +' + picoCfg.min + ' min' + (picoCfg.hasta ? ' · hasta ' + new Date(picoCfg.hasta).toLocaleTimeString('es-MX', {hour: 'numeric', minute: '2-digit'}) : '');
+  } else { b.classList.remove('on'); b.textContent = '⏱ Tiempo normal'; }
+  document.querySelectorAll('#pico-menu [data-pico]').forEach(function(x){ x.classList.toggle('sel', Number(x.getAttribute('data-pico')) === picoCfg.min); });
+}
+function picoMenu(ev){
+  if (ev) ev.stopPropagation();
+  var m = document.getElementById('pico-menu'); m.hidden = !m.hidden;
+  if (!m.hidden) picoCargar();
+}
+document.addEventListener('click', function(){ var m = document.getElementById('pico-menu'); if (m) m.hidden = true; });
+function picoPoner(min){
+  document.getElementById('pico-menu').hidden = true;
+  var hasta = min ? new Date(Date.now() + 45 * 60000).toISOString() : null;
+  Promise.all([
+    sbFetch('config_orp?clave=eq.bot_extra_min', 'PATCH', {valor: min}),
+    sbFetch('config_orp?clave=eq.bot_extra_hasta', 'PATCH', {texto: hasta})
+  ]).then(function(){
+    picoCfg = {min: min, hasta: hasta}; picoPintar();
+    toast(min ? '⏱ Hora pico: el bot promete ' + min + ' min más (se quita solo a las ' + new Date(hasta).toLocaleTimeString('es-MX', {hour: 'numeric', minute: '2-digit'}) + ')' : '⏱ Tiempos normales otra vez');
+  }).catch(function(e){ toast('No se guardó: ' + e.message, true); });
+}
+
 function waIniciar(){
   if (window._waIniciado) return; window._waIniciado = true;
+  picoCargar(); setInterval(picoCargar, 30000);
   waRevisar(); setInterval(waRevisar, 10000);
   waRevisarEquipo(); setInterval(waRevisarEquipo, 10000);
   waCargarCfg();
@@ -4792,7 +4856,9 @@ function waTarjeta(p){
     '<div class="wa-ped-h"><div><div class="wa-ped-f">' + (amp ? '➕ Agregado al pedido #' + p.pedido_padre : '#' + p.id) + ' · ' + waEsc(p.nombre || 'Sin nombre') + '</div>' +
     '<div class="wa-ped-c">' + waTel(p.telefono) + ' · ' + waCuando(p.creado) + (p.venta_id ? ' · venta #' + p.venta_id : '') + '</div></div>' +
     '<div style="display:flex;flex-direction:column;gap:4px;align-items:flex-end">' + pill(es[0], es[1]) + (amp ? pill('Solo lo nuevo', '#f59e0b') : '') + (p.simulado ? pill('Prueba', '#8fa3c8') : '') + '</div></div>' +
-    '<div class="orp-chips">' + pill(dom ? '🛵 A domicilio' : '🥡 Pasa a recoger', dom ? '#7fb0ff' : '#c4b5fd') + pago + '</div>' +
+    '<div class="orp-chips">' + pill(dom ? '🛵 A domicilio' : '🥡 Pasa a recoger', dom ? '#7fb0ff' : '#c4b5fd') + pago +
+    (p.programado_para ? pill('🗓️ Programado: ' + new Date(p.programado_para).toLocaleString('es-MX', {weekday: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit'}), '#f59e0b') : '') +
+    (p.recoge ? pill('🚗 Recoge: ' + waEsc(p.recoge), '#f472b6') : '') + '</div>' +
     dir + cbHtml + repTarjeta(p) + (base
       ? '<div class="wa-ped-items"><div class="orp-cs" style="text-transform:uppercase;letter-spacing:.5px">Ya estaba en el pedido #' + p.pedido_padre + ' (ya cobrado)</div>' +
         (base.items || []).map(function(l){ return lineaHtml(l, true); }).join('') +
