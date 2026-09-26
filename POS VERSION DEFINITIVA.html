@@ -384,7 +384,7 @@ header{background:linear-gradient(90deg,#192d5b 0%,#1e3a78 100%);border-bottom:1
 .pico-wrap{position:relative;flex-shrink:0;margin-left:auto;}
 .pico-btn{background:rgba(255,255,255,.07);color:#b9c8e8;border:1px solid rgba(255,255,255,.14);border-radius:10px;padding:7px 12px;font-family:Inter,sans-serif;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap;}
 .pico-btn.on{background:#b45309;color:#fff;border-color:#f59e0b;animation:waLatido 1.6s ease-in-out infinite;}
-.pico-menu{position:absolute;right:0;top:calc(100% + 6px);z-index:99999;background:#13203d;border:1px solid rgba(255,255,255,.18);border-radius:12px;padding:10px;box-shadow:0 12px 36px rgba(0,0,0,.5);width:250px;}
+.pico-menu{position:fixed;right:16px;top:70px;z-index:99999;background:#13203d;border:1px solid rgba(255,255,255,.18);border-radius:12px;padding:10px;box-shadow:0 12px 36px rgba(0,0,0,.5);width:250px;}
 .pico-menu[hidden]{display:none!important;}
 .pico-menu p{margin:0 0 8px;color:#b9c8e8;font-size:12px;line-height:1.35;}
 .pico-menu .pico-ops{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;}
@@ -4677,7 +4677,13 @@ function picoPintar(){
 function picoMenu(ev){
   if (ev) ev.stopPropagation();
   var m = document.getElementById('pico-menu'); m.hidden = !m.hidden;
-  if (!m.hidden) picoCargar();
+  if (!m.hidden) {
+    // el encabezado recorta lo que se sale de él: el menú se acomoda en la pantalla, justo debajo del botón
+    var rc = document.getElementById('pico-btn').getBoundingClientRect();
+    m.style.top = Math.round(rc.bottom + 6) + 'px';
+    m.style.right = Math.max(8, Math.round(window.innerWidth - rc.right)) + 'px';
+    picoCargar();
+  }
 }
 document.addEventListener('click', function(){ var m = document.getElementById('pico-menu'); if (m) m.hidden = true; });
 function picoPoner(min){
